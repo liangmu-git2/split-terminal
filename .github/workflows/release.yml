@@ -44,7 +44,10 @@ jobs:
       - name: Install setuptools (fix distutils for node-gyp)
         run: pip3 install setuptools --break-system-packages
       - run: npm install
-      - run: npm run dist:mac
+      - run: npm run dist:mac:x64
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      - run: npm run dist:mac:arm64
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
       - uses: actions/upload-artifact@v4
