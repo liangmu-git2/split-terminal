@@ -2904,14 +2904,99 @@ container.addEventListener('wheel', (e) => {
     }
   });
 
-  // 工具栏加"检查更新"按钮
+  // 更新日志数据
+  const CHANGELOG = [
+    {
+      version: '1.2.0',
+      date: '2026-03-06',
+      notes: [
+        '新增：软件内置更新日志，点击"更新"按钮可查看版本历史',
+        '优化：自动更新流程，修复 latest.yml 文件名兼容问题',
+      ],
+    },
+    {
+      version: '1.1.0',
+      date: '2026-03-05',
+      notes: [
+        '新增：自动更新功能，启动后自动检查新版本，发现更新底部弹出提示',
+        '新增：工具栏"更新"按钮，支持手动检查更新',
+        '新增：终端输出中的 Windows 路径支持点击直接打开文件/文件夹',
+        '新增：新建会话时展示所选项目文件夹下的 Claude 历史会话，可选择续接',
+        '优化：Claude 历史下拉列表按时间倒序排列，置顶会话优先显示',
+        '修复：对话框内容过长时无法滚动到底部的问题',
+      ],
+    },
+    {
+      version: '1.0.0',
+      date: '2026-02-01',
+      notes: [
+        '初始版本发布',
+        '支持多标签页、多分屏终端管理',
+        '集成 Claude 历史会话管理（查看、重命名、置顶、删除）',
+        '内置文件浏览器，支持新建/重命名/删除/粘贴文件',
+        '定时任务调度（每日/间隔/一次性），支持任务完成后关机/锁屏',
+        '支持亮色/暗色主题切换，Ctrl+滚轮调整字体大小',
+      ],
+    },
+  ];
+
+  // 创建更新日志弹窗
+  const changelogModal = document.createElement('div');
+  changelogModal.id = 'changelog-modal';
+  changelogModal.style.cssText = 'display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;';
+  changelogModal.innerHTML = `
+    <div style="background:#0f1923;border:1px solid #1e3a5a;border-radius:8px;width:520px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #1e3a5a;">
+        <span style="color:#a0d4ff;font-size:14px;font-weight:600;">版本更新说明</span>
+        <button id="changelog-close" style="background:none;border:none;color:#607080;cursor:pointer;font-size:18px;line-height:1;">×</button>
+      </div>
+      <div id="changelog-body" style="overflow-y:auto;padding:16px 18px;flex:1;"></div>
+      <div style="padding:12px 18px;border-top:1px solid #1e3a5a;display:flex;justify-content:flex-end;gap:8px;">
+        <button id="changelog-check-update" style="padding:5px 16px;background:#0099ee;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;">检查更新</button>
+        <button id="changelog-close-btn" style="padding:5px 16px;background:#1e3a5a;color:#a0d4ff;border:none;border-radius:4px;cursor:pointer;font-size:13px;">关闭</button>
+      </div>
+    </div>`;
+  document.body.appendChild(changelogModal);
+
+  // 渲染日志内容
+  const changelogBody = changelogModal.querySelector('#changelog-body');
+  CHANGELOG.forEach(({ version, date, notes }) => {
+    const block = document.createElement('div');
+    block.style.cssText = 'margin-bottom:18px;';
+    block.innerHTML = `
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;">
+        <span style="color:#00c8b0;font-size:14px;font-weight:700;">v${version}</span>
+        <span style="color:#405060;font-size:12px;">${date}</span>
+      </div>
+      <ul style="margin:0;padding-left:18px;color:#8090a0;font-size:13px;line-height:1.8;">
+        ${notes.map(n => `<li>${n}</li>`).join('')}
+      </ul>`;
+    changelogBody.appendChild(block);
+  });
+
+  function showChangelog() {
+    changelogModal.style.display = 'flex';
+  }
+  function hideChangelog() {
+    changelogModal.style.display = 'none';
+  }
+
+  changelogModal.querySelector('#changelog-close').addEventListener('click', hideChangelog);
+  changelogModal.querySelector('#changelog-close-btn').addEventListener('click', hideChangelog);
+  changelogModal.addEventListener('click', (e) => { if (e.target === changelogModal) hideChangelog(); });
+  changelogModal.querySelector('#changelog-check-update').addEventListener('click', () => {
+    hideChangelog();
+    window.termAPI.updaterCheckForUpdates();
+  });
+
+  // 工具栏加"更新"按钮
   const toolbarActions = document.getElementById('toolbar-actions');
   if (toolbarActions) {
     const btnUpdate = document.createElement('button');
     btnUpdate.id = 'btn-check-update';
-    btnUpdate.title = '检查更新';
+    btnUpdate.title = '版本更新说明';
     btnUpdate.textContent = '⬆ 更新';
-    btnUpdate.addEventListener('click', () => window.termAPI.updaterCheckForUpdates());
+    btnUpdate.addEventListener('click', showChangelog);
     toolbarActions.appendChild(btnUpdate);
   }
 })();
