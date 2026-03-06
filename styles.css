@@ -307,7 +307,17 @@ html, body {
   color: var(--accent);
 }
 
-/* ============ 侧边栏 ============ */
+/* 标签页拖拽排序 */
+.tab-dragging {
+  opacity: 0.4;
+}
+
+.tab-drag-over {
+  border-left: 2px solid var(--accent);
+  background: var(--tab-hover, rgba(0, 153, 238, 0.15));
+}
+
+
 #sidebar {
   width: 240px;
   flex-shrink: 0;

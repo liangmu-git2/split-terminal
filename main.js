@@ -64,6 +64,19 @@ function createWindow() {
 
   // 启动后静默检查更新（延迟 3 秒，避免影响启动速度）
   setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 3000);
+
+  // 检查是否有上次下载完成但未安装的更新
+  setTimeout(() => {
+    const file = getPendingUpdateFile();
+    try {
+      if (fs.existsSync(file)) {
+        const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('updater:pending-install', { version: data.version });
+        }
+      }
+    } catch { /* ignore */ }
+  }, 1500);
 }
 
 ipcMain.handle('pty:create', (event, { id, cols, rows, cwd }) => {
@@ -156,14 +169,15 @@ ipcMain.on('pty:kill', (event, { id }) => {
 });
 
 // ============ 自动更新 ============
-autoUpdater.autoDownload = false; // 发现新版本时不自动下载，先询问用户
+autoUpdater.autoDownload = true; // 发现新版本后静默后台下载
+
+function getPendingUpdateFile() {
+  return path.join(app.getPath('userData'), 'pending-update.json');
+}
 
 autoUpdater.on('update-available', (info) => {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send('updater:update-available', {
-    version: info.version,
-    releaseNotes: info.releaseNotes || '',
-  });
+  // 静默下载，不通知用户（下载完成后再提示）
+  console.log('[Updater] Update available:', info.version, '- downloading silently...');
 });
 
 autoUpdater.on('update-not-available', () => {
@@ -175,12 +189,21 @@ autoUpdater.on('download-progress', (progress) => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('updater:download-progress', {
     percent: Math.round(progress.percent),
+    bytesPerSecond: progress.bytesPerSecond || 0,
+    transferred: progress.transferred || 0,
+    total: progress.total || 0,
   });
 });
 
-autoUpdater.on('update-downloaded', () => {
+autoUpdater.on('update-downloaded', (info) => {
+  // 写标记文件，下次启动时提示安装
+  try {
+    fs.writeFileSync(getPendingUpdateFile(), JSON.stringify({ version: info.version }), 'utf-8');
+  } catch (e) {
+    console.error('[Updater] Failed to write pending-update.json:', e);
+  }
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send('updater:update-downloaded');
+  mainWindow.webContents.send('updater:update-downloaded', { version: info.version });
 });
 
 autoUpdater.on('error', (err) => {
@@ -208,7 +231,49 @@ ipcMain.handle('updater:installUpdate', () => {
   autoUpdater.quitAndInstall();
 });
 
+// 检查是否有待安装的更新（上次下载完成但未安装）
+ipcMain.handle('updater:checkPending', () => {
+  const file = getPendingUpdateFile();
+  try {
+    if (fs.existsSync(file)) {
+      const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      return data; // { version }
+    }
+  } catch { /* ignore */ }
+  return null;
+});
+
+// 清除待安装标记（用户选择"稍后"时）
+ipcMain.handle('updater:clearPending', () => {
+  try {
+    const file = getPendingUpdateFile();
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  } catch { /* ignore */ }
+});
+
 app.whenReady().then(createWindow);
+
+// ============ 布局持久化 ============
+function getLayoutFile() {
+  return path.join(app.getPath('userData'), 'window-layout.json');
+}
+
+ipcMain.handle('layout:save', (event, layout) => {
+  try {
+    fs.writeFileSync(getLayoutFile(), JSON.stringify(layout, null, 2), 'utf-8');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('layout:load', () => {
+  const file = getLayoutFile();
+  try {
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8'));
+  } catch { /* ignore */ }
+  return null;
+});
 
 // ============ 历史记录存储 ============
 function getHistoryDir() {

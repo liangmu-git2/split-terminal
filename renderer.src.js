@@ -419,15 +419,56 @@ function switchTab(tabId) {
 
 function renderTabs() {
   tabsEl.innerHTML = '';
+  let dragSrcId = null;
+
   for (const [id, tab] of tabs) {
     const el = document.createElement('div');
     el.className = 'tab' + (id === activeTabId ? ' active' : '');
+    el.draggable = true;
+    el.dataset.tabId = id;
     el.innerHTML = `<span title="双击重命名">${tab.name} (${tab.sessions.length})</span>`;
     el.querySelector('span').addEventListener('dblclick', (e) => {
       e.stopPropagation();
       startTabInlineRename(id);
     });
     el.addEventListener('click', () => switchTab(id));
+
+    // 拖拽排序
+    el.addEventListener('dragstart', (e) => {
+      dragSrcId = id;
+      e.dataTransfer.effectAllowed = 'move';
+      el.classList.add('tab-dragging');
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('tab-dragging');
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab-drag-over'));
+    });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (dragSrcId && dragSrcId !== id) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab-drag-over'));
+        el.classList.add('tab-drag-over');
+      }
+    });
+    el.addEventListener('dragleave', () => {
+      el.classList.remove('tab-drag-over');
+    });
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('tab-drag-over');
+      if (!dragSrcId || dragSrcId === id) return;
+      // 重排 tabs Map
+      const entries = [...tabs.entries()];
+      const srcIdx = entries.findIndex(([k]) => k === dragSrcId);
+      const dstIdx = entries.findIndex(([k]) => k === id);
+      if (srcIdx === -1 || dstIdx === -1) return;
+      entries.splice(dstIdx, 0, entries.splice(srcIdx, 1)[0]);
+      tabs.clear();
+      for (const [k, v] of entries) tabs.set(k, v);
+      dragSrcId = null;
+      renderTabs();
+    });
 
     // 编辑图标
     const renameBtn = document.createElement('button');
@@ -2830,7 +2871,26 @@ container.addEventListener('wheel', (e) => {
 
 // ============ 初始化 ============
 (async function init() {
-  const tabId = createTab('默认');
+  // 尝试恢复上次布局
+  let layoutRestored = false;
+  try {
+    const layout = await window.termAPI.loadLayout();
+    if (layout && Array.isArray(layout.tabs) && layout.tabs.length > 0) {
+      for (let i = 0; i < layout.tabs.length; i++) {
+        const tabLayout = layout.tabs[i];
+        const tabId = i === 0 ? createTab(tabLayout.name || '默认') : createTab(tabLayout.name || `标签 ${i + 1}`);
+        const count = Math.min(Math.max(tabLayout.count || 1, 1), 6);
+        for (let j = 0; j < count; j++) {
+          await createSession(tabId, { cwd: tabLayout.cwd || null });
+        }
+      }
+      layoutRestored = true;
+    }
+  } catch { /* ignore, fall through to default */ }
+
+  if (!layoutRestored) {
+    createTab('默认');
+  }
 
   // 恢复上次打开的文件夹
   const lastFolder = await window.termAPI.getLastFolder();
@@ -2840,6 +2900,23 @@ container.addEventListener('wheel', (e) => {
     } catch { /* ignore */ }
   }
 })();
+
+// 窗口关闭前保存布局
+window.addEventListener('beforeunload', () => {
+  try {
+    const tabsLayout = [];
+    for (const [, tab] of tabs) {
+      // 取该标签页第一个会话的 cwd 作为代表
+      let cwd = null;
+      if (tab.sessions.length > 0) {
+        const firstSession = allSessions.get(tab.sessions[0]);
+        if (firstSession) cwd = firstSession.cwd;
+      }
+      tabsLayout.push({ name: tab.name, count: tab.sessions.length, cwd });
+    }
+    window.termAPI.saveLayout({ tabs: tabsLayout });
+  } catch { /* ignore */ }
+});
 
 // ============ 自动更新 ============
 (function initUpdater() {
@@ -2851,7 +2928,7 @@ container.addEventListener('wheel', (e) => {
   updateBar.style.cssText = 'display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:#1a3a5c;color:#a0d4ff;padding:8px 16px;font-size:13px;display:none;align-items:center;gap:10px;';
   document.body.appendChild(updateBar);
 
-  let downloadStarted = false;
+  let downloadStarted = false; // kept for compatibility, unused
 
   function showBar(html, buttons = []) {
     updateBar.innerHTML = `<span style="flex:1">${html}</span>`;
@@ -2875,26 +2952,51 @@ container.addEventListener('wheel', (e) => {
         showBar('正在检查更新...');
         break;
       case 'update-available':
-        showBar(`发现新版本 <strong>v${data.version}</strong>，是否下载？`, [
-          { label: '立即下载', primary: true, onClick: () => {
-            downloadStarted = true;
-            window.termAPI.updaterDownloadUpdate();
-            showBar('正在下载更新... 0%');
-          }},
-          { label: '忽略', onClick: hideBar },
-        ]);
+        // 静默后台下载，不打扰用户
         break;
       case 'update-not-available':
         showBar('当前已是最新版本');
         setTimeout(hideBar, 3000);
         break;
-      case 'download-progress':
-        if (downloadStarted) showBar(`正在下载更新... ${data.percent}%`);
+      case 'download-progress': {
+        const pct = data.percent || 0;
+        let speedStr = '';
+        if (data.bytesPerSecond > 0) {
+          const bps = data.bytesPerSecond;
+          speedStr = bps >= 1024 * 1024
+            ? ` · ${(bps / 1024 / 1024).toFixed(1)} MB/s`
+            : ` · ${(bps / 1024).toFixed(0)} KB/s`;
+        }
+        let etaStr = '';
+        if (data.bytesPerSecond > 0 && data.total > 0 && data.transferred < data.total) {
+          const remaining = Math.ceil((data.total - data.transferred) / data.bytesPerSecond);
+          etaStr = remaining >= 60
+            ? ` · 剩余 ${Math.ceil(remaining / 60)} 分钟`
+            : ` · 剩余 ${remaining} 秒`;
+        }
+        showBar(`正在后台下载更新... ${pct}%${speedStr}${etaStr}`);
         break;
+      }
       case 'update-downloaded':
-        showBar('更新已下载完成，重启后生效', [
-          { label: '立即重启安装', primary: true, onClick: () => window.termAPI.updaterInstallUpdate() },
+        showBar(`新版本 <strong>v${data.version}</strong> 已下载完成，重启后生效`, [
+          { label: '立即重启安装', primary: true, onClick: () => {
+            window.termAPI.updaterClearPending && window.termAPI.updaterClearPending();
+            window.termAPI.updaterInstallUpdate();
+          }},
           { label: '稍后', onClick: hideBar },
+        ]);
+        break;
+      case 'pending-install':
+        // 上次已下载完成，本次启动时提示
+        showBar(`新版本 <strong>v${data.version}</strong> 已就绪，是否立即安装？`, [
+          { label: '立即安装', primary: true, onClick: () => {
+            window.termAPI.updaterClearPending && window.termAPI.updaterClearPending();
+            window.termAPI.updaterInstallUpdate();
+          }},
+          { label: '稍后', onClick: () => {
+            window.termAPI.updaterClearPending && window.termAPI.updaterClearPending();
+            hideBar();
+          }},
         ]);
         break;
       case 'error':
@@ -2906,6 +3008,16 @@ container.addEventListener('wheel', (e) => {
 
   // 更新日志数据
   const CHANGELOG = [
+    {
+      version: '1.3.0',
+      date: '2026-03-06',
+      notes: [
+        '新增：布局持久化，窗口关闭时自动保存标签页数量和分屏数，下次启动自动恢复',
+        '新增：标签页支持拖拽排序',
+        '优化：更新流程改为静默后台下载，下次启动时提示"已就绪，是否立即安装"',
+        '优化：下载进度条显示速度（MB/s）和剩余时间',
+      ],
+    },
     {
       version: '1.2.2',
       date: '2026-03-06',

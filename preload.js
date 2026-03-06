@@ -72,8 +72,10 @@ contextBridge.exposeInMainWorld('termAPI', {
   updaterCheckForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
   updaterDownloadUpdate: () => ipcRenderer.invoke('updater:downloadUpdate'),
   updaterInstallUpdate: () => ipcRenderer.invoke('updater:installUpdate'),
+  updaterCheckPending: () => ipcRenderer.invoke('updater:checkPending'),
+  updaterClearPending: () => ipcRenderer.invoke('updater:clearPending'),
   onUpdaterEvent: (callback) => {
-    const events = ['updater:checking', 'updater:update-available', 'updater:update-not-available', 'updater:download-progress', 'updater:update-downloaded', 'updater:error'];
+    const events = ['updater:checking', 'updater:update-available', 'updater:update-not-available', 'updater:download-progress', 'updater:update-downloaded', 'updater:error', 'updater:pending-install'];
     const listeners = events.map(evt => {
       const listener = (event, data) => callback(evt.replace('updater:', ''), data);
       ipcRenderer.on(evt, listener);
@@ -81,4 +83,7 @@ contextBridge.exposeInMainWorld('termAPI', {
     });
     return () => listeners.forEach(({ evt, listener }) => ipcRenderer.removeListener(evt, listener));
   },
+  // 布局持久化 API
+  saveLayout: (layout) => ipcRenderer.invoke('layout:save', layout),
+  loadLayout: () => ipcRenderer.invoke('layout:load'),
 });
