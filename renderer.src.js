@@ -2907,6 +2907,14 @@ container.addEventListener('wheel', (e) => {
   // 更新日志数据
   const CHANGELOG = [
     {
+      version: '1.2.1',
+      date: '2026-03-06',
+      notes: [
+        '新增：macOS 版本支持，提供 DMG 安装包（x64 / arm64）',
+        '优化：GitHub Actions 自动构建，推送 tag 即可同时发布 Windows 和 macOS 版本',
+      ],
+    },
+    {
       version: '1.2.0',
       date: '2026-03-06',
       notes: [
