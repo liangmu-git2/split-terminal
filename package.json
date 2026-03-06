@@ -7,7 +7,8 @@
     "build": "esbuild renderer.src.js --bundle --outfile=renderer.js --platform=browser --format=iife --external:electron",
     "start": "npm run build && electron .",
     "pack": "npm run build && electron-builder --win --dir",
-    "dist": "npm run build && electron-builder --win"
+    "dist": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac"
   },
   "build": {
     "appId": "com.splitterm.app",
@@ -22,6 +23,16 @@
     "win": {
       "target": "nsis",
       "icon": "icon.ico"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] }
+      ],
+      "icon": "icon.png",
+      "category": "public.app-category.developer-tools"
+    },
+    "dmg": {
+      "title": "Split Terminal"
     },
     "nsis": {
       "oneClick": false,

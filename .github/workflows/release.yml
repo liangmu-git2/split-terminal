@@ -1,0 +1,77 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      - name: Fix latest.yml filename (spaces -> dots)
+        shell: pwsh
+        run: |
+          $yml = Get-Content dist/latest.yml -Raw
+          $yml = $yml -replace 'Split-Terminal-Setup-', 'Split.Terminal.Setup.'
+          $yml = $yml -replace 'Split Terminal Setup ', 'Split.Terminal.Setup.'
+          Set-Content dist/latest.yml $yml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run dist:mac
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-dist
+          path: |
+            dist/*.dmg
+            dist/*.dmg.blockmap
+            dist/latest-mac.yml
+
+  release:
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-dist
+          path: dist-win
+      - uses: actions/download-artifact@v4
+        with:
+          name: mac-dist
+          path: dist-mac
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-win/*.exe
+            dist-win/*.exe.blockmap
+            dist-win/latest.yml
+            dist-mac/*.dmg
+            dist-mac/*.dmg.blockmap
+            dist-mac/latest-mac.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
