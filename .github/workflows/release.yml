@@ -13,6 +13,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install setuptools (fix distutils for node-gyp)
+        run: pip install setuptools
       - run: npm install
       - run: npm run dist
         env:
@@ -39,6 +41,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install setuptools (fix distutils for node-gyp)
+        run: pip3 install setuptools
       - run: npm install
       - run: npm run dist:mac
         env:
