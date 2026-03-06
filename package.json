@@ -1,0 +1,64 @@
+{
+  "name": "split-terminal",
+  "version": "1.1.0",
+  "description": "多分屏终端管理器",
+  "main": "main.js",
+  "scripts": {
+    "build": "esbuild renderer.src.js --bundle --outfile=renderer.js --platform=browser --format=iife --external:electron",
+    "start": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --win --dir",
+    "dist": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.splitterm.app",
+    "productName": "Split Terminal",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "liangmu-git2",
+        "repo": "split-terminal"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Split Terminal"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "node_modules/@xterm/xterm/css/xterm.css",
+      "node_modules/node-pty/**/*",
+      "icon.ico",
+      "icon.png"
+    ],
+    "extraResources": [],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ]
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "electron-updater": "^6.8.3",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.27.3",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5",
+    "webpack-cli": "^6.0.1"
+  }
+}

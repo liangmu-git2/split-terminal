@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Split Terminal</title>
+  <link rel="stylesheet" href="./node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="tab-bar">
+    <div id="tabs"></div>
+    <button id="btn-new-tab" title="新建标签页 (Ctrl+Shift+T)">+</button>
+  </div>
+  <div id="toolbar">
+    <span id="session-info"></span>
+    <div id="toolbar-actions">
+      <button id="btn-add" title="新建会话 (Ctrl+Shift+N)">+ 会话</button>
+      <div id="claude-wrapper">
+        <button id="btn-claude" title="Claude 历史 (Ctrl+Shift+L)">🤖 Claude历史</button>
+        <div id="claude-dropdown" class="hidden"></div>
+      </div>
+      <div id="scheduler-wrapper">
+        <button id="btn-scheduler" title="定时任务 (Ctrl+Shift+J)">⏰ 定时</button>
+        <div id="scheduler-dropdown" class="hidden"></div>
+      </div>
+      <button id="btn-theme" title="切换主题 (Ctrl+Shift+K)">🌓</button>
+      <div id="folder-wrapper">
+        <button id="btn-open-folder" title="文件浏览器 (Ctrl+Shift+B)">📂 文件夹</button>
+        <div id="recent-folders-dropdown" class="hidden"></div>
+      </div>
+    </div>
+  </div>
+  <div id="main-area">
+    <div id="sidebar" class="hidden">
+      <div id="sidebar-header">
+        <span id="sidebar-title">文件浏览器</span>
+        <div id="sidebar-actions">
+          <button id="btn-new-file" title="新建文件">📄</button>
+          <button id="btn-new-folder" title="新建文件夹">📁</button>
+          <button id="btn-refresh" title="刷新">🔄</button>
+          <button id="btn-collapse-sidebar" title="收起">◀</button>
+        </div>
+      </div>
+      <div id="file-tree"></div>
+    </div>
+    <div id="sidebar-resize-handle"></div>
+    <div id="terminal-container"></div>
+  </div>
+  <div id="context-menu" class="hidden"></div>
+  
+  <!-- 项目选择对话框 -->
+  <div id="project-dialog" class="dialog hidden">
+    <div class="dialog-overlay"></div>
+    <div class="dialog-content">
+      <div class="dialog-header">
+        <h3>选择项目文件夹</h3>
+        <button class="dialog-close" id="project-dialog-close">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="project-dialog-section">
+          <label>最近使用的项目：</label>
+          <div id="recent-projects-list" class="project-list"></div>
+        </div>
+        <div class="project-dialog-divider">或</div>
+        <div class="project-dialog-section">
+          <label>浏览其他文件夹：</label>
+          <div class="folder-browser-row">
+            <input type="text" id="project-path-input" placeholder="输入或粘贴文件夹路径..." />
+            <button id="btn-browse-folder">浏览...</button>
+          </div>
+        </div>
+        <div id="project-claude-section" class="project-claude-section" style="display:none">
+          <label>该项目的 Claude 历史会话（可选）：</label>
+          <div id="project-claude-list" class="project-claude-list"></div>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <button id="project-dialog-cancel" class="btn-secondary">取消</button>
+        <button id="project-dialog-confirm" class="btn-primary" disabled>确认</button>
+      </div>
+    </div>
+  </div>
+  
+  <script src="renderer.js"></script>
+</body>
+</html>
