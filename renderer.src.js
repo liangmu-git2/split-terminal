@@ -2907,6 +2907,13 @@ container.addEventListener('wheel', (e) => {
   // 更新日志数据
   const CHANGELOG = [
     {
+      version: '1.2.2',
+      date: '2026-03-06',
+      notes: [
+        '修复：GitHub Actions CI 构建环境兼容性问题（Python 3.12 distutils）',
+      ],
+    },
+    {
       version: '1.2.1',
       date: '2026-03-06',
       notes: [
