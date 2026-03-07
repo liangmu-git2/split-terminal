@@ -3029,6 +3029,13 @@ window.addEventListener('beforeunload', () => {
   // 更新日志数据
   const CHANGELOG = [
     {
+      version: '1.3.1',
+      date: '2026-03-07',
+      notes: [
+        '修复：版本号修正，确保自动更新可正常触发',
+      ],
+    },
+    {
       version: '1.3.0',
       date: '2026-03-07',
       notes: [
