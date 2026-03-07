@@ -2879,9 +2879,23 @@ container.addEventListener('wheel', (e) => {
       for (let i = 0; i < layout.tabs.length; i++) {
         const tabLayout = layout.tabs[i];
         const tabId = i === 0 ? createTab(tabLayout.name || '默认') : createTab(tabLayout.name || `标签 ${i + 1}`);
-        const count = Math.min(Math.max(tabLayout.count || 1, 1), 6);
-        for (let j = 0; j < count; j++) {
-          await createSession(tabId, { cwd: tabLayout.cwd || null });
+
+        // 兼容旧格式（count+cwd）和新格式（panes[]）
+        const panes = tabLayout.panes || Array.from({ length: Math.min(Math.max(tabLayout.count || 1, 1), 6) }, () => ({ cwd: tabLayout.cwd || null }));
+
+        for (const pane of panes) {
+          const sid = await createSession(tabId, {
+            cwd: pane.cwd || null,
+            claudeSessionId: pane.claudeSessionId || null,
+            claudeProjectPath: pane.claudeProjectPath || null,
+            claudeName: pane.name || null,
+          });
+          // 如果有关联的 Claude 历史会话，自动 resume
+          if (sid && pane.claudeSessionId) {
+            setTimeout(() => {
+              window.termAPI.write({ id: sid, data: `claude --resume ${pane.claudeSessionId}\r` });
+            }, 800);
+          }
         }
       }
       layoutRestored = true;
@@ -2906,13 +2920,19 @@ window.addEventListener('beforeunload', () => {
   try {
     const tabsLayout = [];
     for (const [, tab] of tabs) {
-      // 取该标签页第一个会话的 cwd 作为代表
-      let cwd = null;
-      if (tab.sessions.length > 0) {
-        const firstSession = allSessions.get(tab.sessions[0]);
-        if (firstSession) cwd = firstSession.cwd;
+      const panes = [];
+      for (const sid of tab.sessions) {
+        const s = allSessions.get(sid);
+        if (!s) continue;
+        panes.push({
+          name: s.name,
+          cwd: s.cwd || null,
+          claudeSessionId: s.claudeSessionId || null,
+          claudeProjectPath: s.claudeProjectPath || null,
+        });
       }
-      tabsLayout.push({ name: tab.name, count: tab.sessions.length, cwd });
+      if (panes.length === 0) continue;
+      tabsLayout.push({ name: tab.name, panes });
     }
     window.termAPI.saveLayout({ tabs: tabsLayout });
   } catch { /* ignore */ }
@@ -3010,12 +3030,10 @@ window.addEventListener('beforeunload', () => {
   const CHANGELOG = [
     {
       version: '1.3.0',
-      date: '2026-03-06',
+      date: '2026-03-07',
       notes: [
-        '新增：布局持久化，窗口关闭时自动保存标签页数量和分屏数，下次启动自动恢复',
-        '新增：标签页支持拖拽排序',
-        '优化：更新流程改为静默后台下载，下次启动时提示"已就绪，是否立即安装"',
-        '优化：下载进度条显示速度（MB/s）和剩余时间',
+        '新增：布局持久化，关闭时保存每个分屏的工作目录和 Claude 会话关联',
+        '新增：启动时自动恢复布局，并自动续接上次的 Claude 历史会话',
       ],
     },
     {
