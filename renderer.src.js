@@ -1422,14 +1422,53 @@ function createFolderNode(parentEl, entry, level) {
   }
 }
 
+// SVG 图标：Office 系列 + PDF（仿官方风格）
+const FILE_SVG_ICONS = {
+  excel: `<svg viewBox="0 0 16 16" width="14" height="14"><rect x="1" y="1" width="14" height="14" rx="2" fill="#1d6f42"/><text x="8" y="12" text-anchor="middle" fill="#fff" font-size="9" font-weight="bold" font-family="Arial">X</text></svg>`,
+  word: `<svg viewBox="0 0 16 16" width="14" height="14"><rect x="1" y="1" width="14" height="14" rx="2" fill="#2b579a"/><text x="8" y="12" text-anchor="middle" fill="#fff" font-size="9" font-weight="bold" font-family="Arial">W</text></svg>`,
+  ppt: `<svg viewBox="0 0 16 16" width="14" height="14"><rect x="1" y="1" width="14" height="14" rx="2" fill="#c43e1c"/><text x="8" y="12" text-anchor="middle" fill="#fff" font-size="9" font-weight="bold" font-family="Arial">P</text></svg>`,
+  pdf: `<svg viewBox="0 0 16 16" width="14" height="14"><rect x="1" y="1" width="14" height="14" rx="2" fill="#e03030"/><text x="8" y="12" text-anchor="middle" fill="#fff" font-size="8" font-weight="bold" font-family="Arial">PDF</text></svg>`,
+};
+
+const FILE_SVG_MAP = {
+  xlsx: 'excel', xls: 'excel', csv: 'excel',
+  docx: 'word', doc: 'word',
+  pptx: 'ppt', ppt: 'ppt',
+  pdf: 'pdf',
+};
+
+const FILE_EMOJI_MAP = {
+  html: '🌐', htm: '🌐',
+  css:  '🎨', scss: '🎨', less: '🎨',
+  js: '📒', jsx: '📒', ts: '📒', tsx: '📒',
+  py: '🐍', go: '🔷', rs: '🦀', java: '☕', rb: '💎',
+  json: '📋', yaml: '📋', yml: '📋', toml: '📋', xml: '📋',
+  md: '📝',
+  png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', svg: '🖼️', webp: '🖼️', ico: '🖼️',
+  mp4: '🎬', mov: '🎬', avi: '🎬',
+  mp3: '🎵', wav: '🎵', flac: '🎵',
+  zip: '📦', rar: '📦', '7z': '📦', tar: '📦', gz: '📦',
+  sh: '⚙️', bat: '⚙️', ps1: '⚙️',
+  exe: '💿', dmg: '💿', msi: '💿',
+  txt: '📄', log: '📄',
+  env: '🔒', gitignore: '🔒',
+  sql: '🗃️',
+};
+
 function createFileNode(parentEl, entry, level) {
   const fileRow = document.createElement('div');
   fileRow.className = 'tree-item';
   fileRow.style.paddingLeft = (level * 16 + 24) + 'px';
 
+  const ext = entry.name.includes('.') ? entry.name.split('.').pop().toLowerCase() : '';
   const icon = document.createElement('span');
   icon.className = 'tree-icon';
-  icon.textContent = '📄';
+  const svgType = FILE_SVG_MAP[ext];
+  if (svgType) {
+    icon.innerHTML = FILE_SVG_ICONS[svgType];
+  } else {
+    icon.textContent = FILE_EMOJI_MAP[ext] || '📄';
+  }
 
   const name = document.createElement('span');
   name.className = 'tree-name';
@@ -3028,6 +3067,13 @@ window.addEventListener('beforeunload', () => {
 
   // 更新日志数据
   const CHANGELOG = [
+    {
+      version: '1.3.2',
+      date: '2026-03-09',
+      notes: [
+        '优化：文件树图标区分格式，Office 文件使用 SVG 彩色图标，其他格式使用语义化 emoji',
+      ],
+    },
     {
       version: '1.3.1',
       date: '2026-03-07',
