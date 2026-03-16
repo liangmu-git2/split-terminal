@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const pty = require('node-pty');
 const { autoUpdater } = require('electron-updater');
+const { CronExpressionParser } = require('cron-parser');
 
 // 检测可用的 Shell
 function detectShell() {
@@ -19,6 +20,7 @@ function detectShell() {
 
 const shellPath = detectShell();
 let mainWindow = null;
+let tray = null;
 const sessions = new Map();
 
 function createWindow() {
@@ -77,6 +79,64 @@ function createWindow() {
       }
     } catch { /* ignore */ }
   }, 1500);
+
+  // ============ 系统托盘 ============
+  const iconPath = path.join(__dirname, 'icon.ico');
+  const trayIcon = nativeImage.createFromPath(iconPath);
+  tray = new Tray(trayIcon.resize({ width: 16, height: 16 }));
+  tray.setToolTip('Split Terminal');
+
+  const trayMenu = Menu.buildFromTemplate([
+    {
+      label: '显示窗口',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      },
+    },
+    {
+      label: '查看任务状态',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.focus();
+          mainWindow.webContents.send('scheduler:showPanel');
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+  tray.setContextMenu(trayMenu);
+  tray.on('double-click', () => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
+  // 拦截窗口关闭：有启用的定时任务时最小化到托盘
+  mainWindow.on('close', (e) => {
+    if (app.isQuitting) return;
+    const hasEnabledTasks = schedulerTasks.some(t => t.enabled);
+    if (hasEnabledTasks) {
+      e.preventDefault();
+      mainWindow.hide();
+      tray.displayBalloon({
+        iconType: 'info',
+        title: 'Split Terminal',
+        content: '已最小化到系统托盘，定时任务将继续运行。',
+      });
+    }
+  });
 }
 
 ipcMain.handle('pty:create', (event, { id, cols, rows, cwd }) => {
@@ -1040,6 +1100,19 @@ function startScheduler() {
         if (now.getTime() >= targetTime && (!task.lastRunAt || new Date(task.lastRunAt).getTime() < targetTime)) {
           shouldRun = true;
         }
+      } else if (task.scheduleType === 'cron' && task.cronExpression) {
+        try {
+          const interval = CronExpressionParser.parse(task.cronExpression, { currentDate: now });
+          const prev = interval.prev().toDate();
+          // 如果上一个触发点在 60 秒内，且上次运行时间早于该触发点，则执行
+          const diffMs = now.getTime() - prev.getTime();
+          const lastRun = task.lastRunAt ? new Date(task.lastRunAt).getTime() : 0;
+          if (diffMs >= 0 && diffMs < 90000 && lastRun < prev.getTime()) {
+            shouldRun = true;
+          }
+        } catch (e) {
+          // cron 表达式解析失败，跳过
+        }
       }
 
       if (shouldRun) {
@@ -1086,5 +1159,6 @@ app.on('window-all-closed', () => {
     try { proc.kill(); } catch (e) { /* ignore */ }
   }
   sessions.clear();
+  if (tray) { tray.destroy(); tray = null; }
   app.quit();
 });

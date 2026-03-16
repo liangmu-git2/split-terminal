@@ -66,6 +66,11 @@ contextBridge.exposeInMainWorld('termAPI', {
     return () => ipcRenderer.removeListener('scheduler:execute', listener);
   },
   schedulerReportResult: (result) => ipcRenderer.send('scheduler:reportResult', result),
+  onSchedulerShowPanel: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('scheduler:showPanel', listener);
+    return () => ipcRenderer.removeListener('scheduler:showPanel', listener);
+  },
   // 系统操作 API
   systemPostAction: (action) => ipcRenderer.invoke('system:postAction', action),
   // 自动更新 API

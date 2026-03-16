@@ -445,8 +445,12 @@ function renderTabs() {
     });
     el.addEventListener('dragover', (e) => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      if (dragSrcId && dragSrcId !== id) {
+      // 面板拖入标签页 或 标签页排序
+      if (e.dataTransfer.types.includes('text/x-pane-id')) {
+        e.dataTransfer.dropEffect = 'move';
+        el.classList.add('tab-drag-over');
+      } else if (dragSrcId && dragSrcId !== id) {
+        e.dataTransfer.dropEffect = 'move';
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab-drag-over'));
         el.classList.add('tab-drag-over');
       }
@@ -457,6 +461,36 @@ function renderTabs() {
     el.addEventListener('drop', (e) => {
       e.preventDefault();
       el.classList.remove('tab-drag-over');
+
+      // 面板拖入标签页：移动面板到目标标签页
+      const paneSrcId = e.dataTransfer.getData('text/x-pane-id');
+      if (paneSrcId) {
+        const session = allSessions.get(paneSrcId);
+        if (!session || session.tabId === id) return;
+        const srcTab = tabs.get(session.tabId);
+        const dstTab = tabs.get(id);
+        if (!srcTab || !dstTab) return;
+        // 目标标签页已满（6个）
+        if (dstTab.sessions.length >= 6) return;
+        // 源标签页只剩1个面板，不允许移走
+        if (srcTab.sessions.length <= 1) return;
+        // 从源标签页移除
+        srcTab.sessions = srcTab.sessions.filter(s => s !== paneSrcId);
+        if (srcTab.focusedSession === paneSrcId) {
+          srcTab.focusedSession = srcTab.sessions[0] || null;
+        }
+        // 加入目标标签页
+        dstTab.sessions.push(paneSrcId);
+        session.tabId = id;
+        // 切换到目标标签页并聚焦该面板
+        switchTab(id);
+        dstTab.focusedSession = paneSrcId;
+        renderPanes();
+        renderTabs();
+        return;
+      }
+
+      // 标签页排序
       if (!dragSrcId || dragSrcId === id) return;
       // 重排 tabs Map
       const entries = [...tabs.entries()];
@@ -518,6 +552,11 @@ async function createSession(tabId, opts = {}) {
     if (e.type !== 'keydown') return true;
     // 跳过 IME 输入法组合状态，避免干扰中文输入
     if (e.isComposing || e.keyCode === 229) return true;
+    // Shift+Enter → 发送 Alt+Enter（ESC + CR），实现换行
+    if (e.shiftKey && e.key === 'Enter') {
+      window.termAPI.write({ id: sessionId, data: '\x1b\r' });
+      return false;
+    }
     if (e.ctrlKey && e.key === 'c' && term.hasSelection()) {
       navigator.clipboard.writeText(term.getSelection());
       term.clearSelection();
@@ -556,6 +595,47 @@ async function createSession(tabId, opts = {}) {
     if (e.target.classList.contains('pane-close')) return;
     if (e.target.classList.contains('inline-rename')) return;
     focusSession(sessionId);
+  });
+
+  // 面板拖拽排序（通过 header 拖拽交换位置）
+  header.draggable = true;
+  header.addEventListener('dragstart', (e) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/x-pane-id', sessionId);
+    pane.classList.add('pane-dragging');
+  });
+  header.addEventListener('dragend', () => {
+    pane.classList.remove('pane-dragging');
+    document.querySelectorAll('.terminal-pane').forEach(p => p.classList.remove('pane-drag-over'));
+  });
+  pane.addEventListener('dragover', (e) => {
+    const srcId = e.dataTransfer.types.includes('text/x-pane-id');
+    if (!srcId) return; // 不是面板拖拽，交给文件拖拽处理
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    pane.classList.add('pane-drag-over');
+  });
+  pane.addEventListener('dragleave', (e) => {
+    if (e.relatedTarget && pane.contains(e.relatedTarget)) return;
+    pane.classList.remove('pane-drag-over');
+  });
+  pane.addEventListener('drop', (e) => {
+    const srcSessionId = e.dataTransfer.getData('text/x-pane-id');
+    if (!srcSessionId || srcSessionId === sessionId) {
+      pane.classList.remove('pane-drag-over');
+      return; // 不是面板拖拽或拖到自身，跳过
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    pane.classList.remove('pane-drag-over');
+    // 交换两个面板在 tab.sessions 中的位置
+    const curTab = tabs.get(activeTabId);
+    if (!curTab) return;
+    const srcIdx = curTab.sessions.indexOf(srcSessionId);
+    const dstIdx = curTab.sessions.indexOf(sessionId);
+    if (srcIdx === -1 || dstIdx === -1) return;
+    [curTab.sessions[srcIdx], curTab.sessions[dstIdx]] = [curTab.sessions[dstIdx], curTab.sessions[srcIdx]];
+    renderPanes();
   });
 
   const wrapper = document.createElement('div');
@@ -728,21 +808,22 @@ async function createSession(tabId, opts = {}) {
   // 点击面板聚焦
   wrapper.addEventListener('mousedown', () => focusSession(sessionId));
 
-  // 接收文件树拖拽
-  pane.addEventListener('dragover', (e) => {
+  // 接收文件树拖拽（仅处理非面板拖拽）
+  wrapper.addEventListener('dragover', (e) => {
+    if (e.dataTransfer.types.includes('text/x-pane-id')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     pane.classList.add('drag-over');
   });
-  pane.addEventListener('dragleave', () => {
+  wrapper.addEventListener('dragleave', () => {
     pane.classList.remove('drag-over');
   });
-  pane.addEventListener('drop', (e) => {
+  wrapper.addEventListener('drop', (e) => {
+    if (e.dataTransfer.types.includes('text/x-pane-id')) return;
     e.preventDefault();
     pane.classList.remove('drag-over');
     const droppedPath = e.dataTransfer.getData('text/plain');
     if (droppedPath && !session.isHistory) {
-      // 路径含空格时加引号
       const safePath = droppedPath.includes(' ') ? `"${droppedPath}"` : droppedPath;
       window.termAPI.write({ id: sessionId, data: safePath });
       focusSession(sessionId);
@@ -2129,6 +2210,35 @@ function stripAnsi(str) {
   return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '').replace(/\x1b[^a-zA-Z]*[a-zA-Z]/g, '');
 }
 
+// 从终端输出中提取 Claude 的实际回复内容（去除 spinner、分隔线等噪音）
+function extractClaudeReply(plainText) {
+  // 取最后 2000 字符
+  let text = plainText.slice(-2000);
+  // 按行分割
+  const lines = text.split('\n');
+  const cleaned = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // 跳过空行
+    if (!trimmed) continue;
+    // 跳过分隔线（连续的 ─ 或 ═ 或 ─ 混合）
+    if (/^[─═━─\-]{5,}$/.test(trimmed)) continue;
+    // 跳过 spinner 动画行（Pondering、Thinking 等 + 特殊字符）
+    if (/^[✶✻✽✢·●○◉◎\s]*(Pondering|Thinking|Processing|Loading|Generating|Analyzing|Searching|Reading|Writing|Editing|Running)…?[✶✻✽✢·●○◉◎\s]*$/i.test(trimmed)) continue;
+    // 跳过纯 spinner 字符行
+    if (/^[✶✻✽✢·●○◉◎\s*]+$/.test(trimmed)) continue;
+    // 跳过 Claude 提示符行
+    if (/^[>❯\$]\s*$/.test(trimmed)) continue;
+    // 跳过 "Found X settings issues" 等系统消息
+    if (/^Found \d+ settings? issues?/i.test(trimmed)) continue;
+    if (/^\/doctor for details/i.test(trimmed)) continue;
+    cleaned.push(trimmed);
+  }
+  // 取最后几行有意义的内容
+  const result = cleaned.slice(-8).join('\n');
+  return result.slice(0, 500);
+}
+
 // Claude 就绪检测：轮询 outputBuffer，检测提示符
 function waitForClaudeReady(sessionId, timeoutMs = 45000, abortSignal = null) {
   return new Promise((resolve) => {
@@ -2232,7 +2342,11 @@ function waitForTaskCompletion(sessionId, timeoutMs = 600000, abortSignal = null
     const check = () => {
       if (abortSignal && abortSignal.aborted) { resolve('aborted'); return; }
       const s = allSessions.get(sessionId);
-      if (!s) { resolve('exited'); return; }
+      if (!s) {
+        // session 退出不一定是失败，可能是 Claude 正常完成后用户/系统关闭了
+        // 给一个 'exited' 状态，由调用方判断
+        resolve('exited'); return;
+      }
 
       const elapsed = Date.now() - startTime;
       if (elapsed > timeoutMs) { resolve('timeout'); return; }
@@ -2242,6 +2356,13 @@ function waitForTaskCompletion(sessionId, timeoutMs = 600000, abortSignal = null
         lastBufferLen = currentLen;
         stableStart = Date.now();
       } else if ((Date.now() - stableStart) >= 30000) {
+        // 30秒无输出变化，检查是否回到了 Claude 提示符（说明任务完成）
+        const plain = stripAnsi((s.outputBuffer || '').slice(-300));
+        if (/[>❯\$]\s*$/.test(plain) || /\n\s*$/.test(plain)) {
+          resolve('stable');
+          return;
+        }
+        // 即使没检测到提示符，30秒无变化也认为完成
         resolve('stable');
         return;
       }
@@ -2361,16 +2482,17 @@ async function executeSchedulerTask(task) {
 
     if (runState.aborted) throw new Error('已中止');
 
-    // 7. 收集输出摘要
+    log('Result: ' + result);
+
+    // 提取 Claude 的实际回复内容（去除 spinner、分隔线等终端噪音）
     const s = allSessions.get(sessionId);
     if (s) {
       const plain = stripAnsi(s.outputBuffer || '');
-      summary = plain.slice(-500).trim();
+      summary = extractClaudeReply(plain);
     }
 
-    log('Result: ' + result);
-
-    status = result === 'exited' ? 'failed' : 'success';
+    // exited 也可能是正常完成（Claude 退出），不一律判定失败
+    status = (result === 'stable' || result === 'exited') ? 'success' : 'failed';
     if (result === 'timeout') summary = '[超时] ' + summary;
   } catch (e) {
     const msg = e.message || String(e);
@@ -2413,15 +2535,27 @@ async function executeSchedulerTask(task) {
     }
   }
 
-  // 任务完成后，将焦点交回给终端，让用户可以继续输入
-  if (finishedSessionId && allSessions.has(finishedSessionId)) {
-    focusSession(finishedSessionId);
+  // 任务完成后关闭定时任务创建的终端标签页
+  if (finishedSessionId) {
+    const s = allSessions.get(finishedSessionId);
+    if (s && s.tabId) {
+      log('Closing scheduler tab: ' + s.tabId);
+      closeTab(s.tabId);
+    }
   }
 }
 
 // 注册执行引擎：主进程调度 + 立即运行按钮
 window.termAPI.onSchedulerExecute(executeSchedulerTask);
 window._schedulerExecuteHandler = executeSchedulerTask;
+
+// 托盘"查看任务状态"点击时打开面板
+window.termAPI.onSchedulerShowPanel(() => {
+  if (schedulerDropdown.classList.contains('hidden')) {
+    renderSchedulerList();
+    schedulerDropdown.classList.remove('hidden');
+  }
+});
 
 // UI: 切换定时任务面板
 function toggleSchedulerDropdown() {
@@ -2489,6 +2623,8 @@ async function renderSchedulerList() {
         scheduleDesc = `每 ${task.intervalHours} 小时`;
       } else if (task.scheduleType === 'once') {
         scheduleDesc = `一次性 ${task.onceDateTime}`;
+      } else if (task.scheduleType === 'cron') {
+        scheduleDesc = `cron: ${task.cronExpression || '?'}`;
       }
       const lastRun = task.lastRunAt ? formatTime(task.lastRunAt) : '从未执行';
       const postActionNames = { shutdown: '关机', lock: '锁屏', sleep: '睡眠', hibernate: '休眠' };
@@ -2679,7 +2815,7 @@ async function renderSchedulerForm(existingTask) {
   const typeLabel = document.createElement('label');
   typeLabel.textContent = '调度方式';
   const typeSelect = document.createElement('select');
-  typeSelect.innerHTML = '<option value="daily">每天定时</option><option value="interval">固定间隔</option><option value="once">一次性执行</option>';
+  typeSelect.innerHTML = '<option value="daily">每天定时</option><option value="interval">固定间隔</option><option value="once">一次性执行</option><option value="cron">Cron 表达式</option>';
   if (existingTask) typeSelect.value = existingTask.scheduleType || 'daily';
   typeDiv.appendChild(typeLabel);
   typeDiv.appendChild(typeSelect);
@@ -2705,22 +2841,60 @@ async function renderSchedulerForm(existingTask) {
   onceDateTimeInput.addEventListener('keydown', (e) => e.stopPropagation());
   onceDateTimeInput.style.display = 'none';
 
+  // Cron 表达式输入
+  const cronWrapper = document.createElement('div');
+  cronWrapper.style.display = 'none';
+  const cronInput = document.createElement('input');
+  cronInput.type = 'text';
+  cronInput.value = existingTask ? (existingTask.cronExpression || '') : '';
+  cronInput.placeholder = '例如: 0 8,12,18 * * *';
+  cronInput.addEventListener('keydown', (e) => e.stopPropagation());
+  const cronPreset = document.createElement('select');
+  cronPreset.innerHTML = `
+    <option value="">常用预设...</option>
+    <option value="*/5 * * * *">每5分钟</option>
+    <option value="*/30 * * * *">每30分钟</option>
+    <option value="0 * * * *">每小时整点</option>
+    <option value="0 8,12,18 * * *">每天 8/12/18 点</option>
+    <option value="0 9 * * 1-5">工作日 9:00</option>
+    <option value="0 0 * * *">每天午夜</option>
+    <option value="0 0 * * 0">每周日午夜</option>
+    <option value="0 0 1 * *">每月1号午夜</option>
+  `;
+  cronPreset.addEventListener('change', () => {
+    if (cronPreset.value) {
+      cronInput.value = cronPreset.value;
+      cronPreset.value = '';
+    }
+  });
+  cronWrapper.appendChild(cronInput);
+  cronWrapper.appendChild(cronPreset);
+
   const updateParamVisibility = () => {
     if (typeSelect.value === 'daily') {
       timeInput.style.display = '';
       intervalInput.style.display = 'none';
       onceDateTimeInput.style.display = 'none';
+      cronWrapper.style.display = 'none';
       paramLabel.textContent = '执行时间';
     } else if (typeSelect.value === 'interval') {
       timeInput.style.display = 'none';
       intervalInput.style.display = '';
       onceDateTimeInput.style.display = 'none';
+      cronWrapper.style.display = 'none';
       paramLabel.textContent = '间隔(小时)';
     } else if (typeSelect.value === 'once') {
       timeInput.style.display = 'none';
       intervalInput.style.display = 'none';
       onceDateTimeInput.style.display = '';
+      cronWrapper.style.display = 'none';
       paramLabel.textContent = '执行时间';
+    } else if (typeSelect.value === 'cron') {
+      timeInput.style.display = 'none';
+      intervalInput.style.display = 'none';
+      onceDateTimeInput.style.display = 'none';
+      cronWrapper.style.display = '';
+      paramLabel.textContent = 'Cron 表达式';
     }
   };
   typeSelect.addEventListener('change', updateParamVisibility);
@@ -2730,6 +2904,7 @@ async function renderSchedulerForm(existingTask) {
   paramDiv.appendChild(timeInput);
   paramDiv.appendChild(intervalInput);
   paramDiv.appendChild(onceDateTimeInput);
+  paramDiv.appendChild(cronWrapper);
 
   schedRow.appendChild(typeDiv);
   schedRow.appendChild(paramDiv);
@@ -2794,6 +2969,7 @@ async function renderSchedulerForm(existingTask) {
       dailyTime: typeSelect.value === 'daily' ? timeInput.value : undefined,
       intervalHours: typeSelect.value === 'interval' ? parseInt(intervalInput.value) || 4 : undefined,
       onceDateTime: typeSelect.value === 'once' ? onceDateTimeInput.value : undefined,
+      cronExpression: typeSelect.value === 'cron' ? cronInput.value.trim() : undefined,
       postAction: postActionSelect.value !== 'none' ? postActionSelect.value : undefined,
       enabled: existingTask ? existingTask.enabled : true,
       lastRunAt: existingTask ? existingTask.lastRunAt : null,
@@ -2914,30 +3090,37 @@ container.addEventListener('wheel', (e) => {
   let layoutRestored = false;
   try {
     const layout = await window.termAPI.loadLayout();
-    if (layout && Array.isArray(layout.tabs) && layout.tabs.length > 0) {
-      for (let i = 0; i < layout.tabs.length; i++) {
-        const tabLayout = layout.tabs[i];
-        const tabId = i === 0 ? createTab(tabLayout.name || '默认') : createTab(tabLayout.name || `标签 ${i + 1}`);
+    if (layout) {
+      // 恢复主题
+      if (layout.theme && THEMES[layout.theme]) {
+        currentTheme = layout.theme;
+        document.documentElement.dataset.theme = currentTheme === 'light' ? 'light' : '';
+      }
+      if (Array.isArray(layout.tabs) && layout.tabs.length > 0) {
+        for (let i = 0; i < layout.tabs.length; i++) {
+          const tabLayout = layout.tabs[i];
+          const tabId = i === 0 ? createTab(tabLayout.name || '默认') : createTab(tabLayout.name || `标签 ${i + 1}`);
 
-        // 兼容旧格式（count+cwd）和新格式（panes[]）
-        const panes = tabLayout.panes || Array.from({ length: Math.min(Math.max(tabLayout.count || 1, 1), 6) }, () => ({ cwd: tabLayout.cwd || null }));
+          // 兼容旧格式（count+cwd）和新格式（panes[]）
+          const panes = tabLayout.panes || Array.from({ length: Math.min(Math.max(tabLayout.count || 1, 1), 6) }, () => ({ cwd: tabLayout.cwd || null }));
 
-        for (const pane of panes) {
-          const sid = await createSession(tabId, {
-            cwd: pane.cwd || null,
-            claudeSessionId: pane.claudeSessionId || null,
-            claudeProjectPath: pane.claudeProjectPath || null,
-            claudeName: pane.name || null,
-          });
-          // 如果有关联的 Claude 历史会话，自动 resume
-          if (sid && pane.claudeSessionId) {
-            setTimeout(() => {
-              window.termAPI.write({ id: sid, data: `claude --resume ${pane.claudeSessionId}\r` });
-            }, 800);
+          for (const pane of panes) {
+            const sid = await createSession(tabId, {
+              cwd: pane.cwd || null,
+              claudeSessionId: pane.claudeSessionId || null,
+              claudeProjectPath: pane.claudeProjectPath || null,
+              claudeName: pane.name || null,
+            });
+            // 如果有关联的 Claude 历史会话，自动 resume
+            if (sid && pane.claudeSessionId) {
+              setTimeout(() => {
+                window.termAPI.write({ id: sid, data: `claude --resume ${pane.claudeSessionId}\r` });
+              }, 800);
+            }
           }
         }
+        layoutRestored = true;
       }
-      layoutRestored = true;
     }
   } catch { /* ignore, fall through to default */ }
 
@@ -2973,7 +3156,7 @@ window.addEventListener('beforeunload', () => {
       if (panes.length === 0) continue;
       tabsLayout.push({ name: tab.name, panes });
     }
-    window.termAPI.saveLayout({ tabs: tabsLayout });
+    window.termAPI.saveLayout({ tabs: tabsLayout, theme: currentTheme });
   } catch { /* ignore */ }
 });
 
@@ -3067,6 +3250,19 @@ window.addEventListener('beforeunload', () => {
 
   // 更新日志数据
   const CHANGELOG = [
+    {
+      version: '1.4.0',
+      date: '2026-03-16',
+      notes: [
+        '新增：Shift+Enter 换行（与 Alt+Enter 一致）',
+        '新增：面板拖拽排序，拖拽标题栏交换同标签页内面板位置',
+        '新增：面板跨标签页拖拽，拖拽标题栏到其他标签页可移动面板',
+        '新增：主题记忆，切换主题后下次启动自动恢复',
+        '新增：定时任务支持 cron 表达式',
+        '修复：定时任务成功后状态误判为失败',
+        '优化：定时任务完成后自动关闭终端会话',
+      ],
+    },
     {
       version: '1.3.2',
       date: '2026-03-09',

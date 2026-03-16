@@ -317,6 +317,24 @@ html, body {
   background: var(--tab-hover, rgba(0, 153, 238, 0.15));
 }
 
+/* 面板拖拽排序 */
+.pane-header[draggable="true"] {
+  cursor: grab;
+}
+
+.pane-header[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.pane-dragging {
+  opacity: 0.4;
+}
+
+.pane-drag-over {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 
 #sidebar {
   width: 240px;
