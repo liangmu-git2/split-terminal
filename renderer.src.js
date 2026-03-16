@@ -415,6 +415,11 @@ function switchTab(tabId) {
   activeTabId = tabId;
   renderTabs();
   renderPanes();
+  // 切换标签页后聚焦当前面板（确保 IME 中文输入正常）
+  const tab = tabs.get(tabId);
+  if (tab && tab.focusedSession) {
+    setTimeout(() => focusSession(tab.focusedSession), 50);
+  }
 }
 
 function renderTabs() {
@@ -552,8 +557,10 @@ async function createSession(tabId, opts = {}) {
     if (e.type !== 'keydown') return true;
     // 跳过 IME 输入法组合状态，避免干扰中文输入
     if (e.isComposing || e.keyCode === 229) return true;
-    // Shift+Enter → 发送 Alt+Enter（ESC + CR），实现换行
+    // Shift+Enter → 换行（模拟 Alt+Enter：ESC + CR）
     if (e.shiftKey && e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
       window.termAPI.write({ id: sessionId, data: '\x1b\r' });
       return false;
     }
@@ -870,8 +877,7 @@ async function destroySession(sessionId, skipRender) {
     updateInfo();
     // 聚焦剩余面板
     if (tab && tab.focusedSession) {
-      const s = allSessions.get(tab.focusedSession);
-      if (s) s.term.focus();
+      focusSession(tab.focusedSession);
     }
   }
 }
@@ -1453,7 +1459,7 @@ function createFolderNode(parentEl, entry, level) {
       const session = allSessions.get(tab.focusedSession);
       if (session && !session.isHistory) {
         window.termAPI.write({ id: tab.focusedSession, data: `cd "${entry.path}"` });
-        session.term.focus();
+        focusSession(tab.focusedSession);
       }
     }
   });
@@ -3250,6 +3256,14 @@ window.addEventListener('beforeunload', () => {
 
   // 更新日志数据
   const CHANGELOG = [
+    {
+      version: '1.4.1',
+      date: '2026-03-16',
+      notes: [
+        '修复：Shift+Enter 换行不准，彻底阻止事件冒泡避免重复回车',
+        '修复：关闭会话或切换标签页后无法输入中文（IME 焦点丢失）',
+      ],
+    },
     {
       version: '1.4.0',
       date: '2026-03-16',
