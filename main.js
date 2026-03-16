@@ -231,6 +231,19 @@ ipcMain.on('pty:kill', (event, { id }) => {
 // ============ 自动更新 ============
 autoUpdater.autoDownload = true; // 发现新版本后静默后台下载
 
+const UPDATER_MIRROR_URL = 'https://mirror.ghproxy.com/https://github.com/liangmu-git2/split-terminal/releases/latest/download';
+const UPDATER_GITHUB_URL = 'https://github.com/liangmu-git2/split-terminal/releases/latest/download';
+let updaterUsingMirror = true; // 当前是否使用镜像
+
+function setUpdaterFeed(useMirror) {
+  updaterUsingMirror = useMirror;
+  const url = useMirror ? UPDATER_MIRROR_URL : UPDATER_GITHUB_URL;
+  autoUpdater.setFeedURL({ provider: 'generic', url });
+  console.log(`[Updater] Feed URL: ${useMirror ? 'mirror' : 'github direct'}`);
+}
+
+setUpdaterFeed(true); // 默认走镜像
+
 function getPendingUpdateFile() {
   return path.join(app.getPath('userData'), 'pending-update.json');
 }
@@ -267,6 +280,13 @@ autoUpdater.on('update-downloaded', (info) => {
 });
 
 autoUpdater.on('error', (err) => {
+  // 镜像失败时自动回退到 GitHub 直连重试一次
+  if (updaterUsingMirror) {
+    console.log('[Updater] Mirror failed, falling back to GitHub direct:', err.message);
+    setUpdaterFeed(false);
+    autoUpdater.checkForUpdates().catch(() => {});
+    return;
+  }
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('updater:error', { message: err.message });
 });
@@ -274,6 +294,7 @@ autoUpdater.on('error', (err) => {
 function checkForUpdatesManually() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('updater:checking');
+  setUpdaterFeed(true); // 手动检查时重新从镜像开始尝试
   autoUpdater.checkForUpdates().catch((err) => {
     mainWindow.webContents.send('updater:error', { message: err.message });
   });

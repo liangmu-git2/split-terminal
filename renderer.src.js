@@ -3257,6 +3257,13 @@ window.addEventListener('beforeunload', () => {
   // 更新日志数据
   const CHANGELOG = [
     {
+      version: '1.4.2',
+      date: '2026-03-16',
+      notes: [
+        '优化：自动更新使用国内镜像加速下载，镜像失败自动回退 GitHub 直连',
+      ],
+    },
+    {
       version: '1.4.1',
       date: '2026-03-16',
       notes: [
