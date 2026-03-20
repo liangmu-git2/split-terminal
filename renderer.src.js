@@ -133,10 +133,12 @@ const projectDialogConfirm = document.getElementById('project-dialog-confirm');
 const projectDialogCancel = document.getElementById('project-dialog-cancel');
 const projectDialogClose = document.getElementById('project-dialog-close');
 const btnBrowseFolder = document.getElementById('btn-browse-folder');
+const providerInputs = Array.from(document.querySelectorAll('input[name="session-provider"]'));
 const projectClaudeSection = document.getElementById('project-claude-section');
 const projectClaudeList = document.getElementById('project-claude-list');
 
 let selectedProjectPath = null;
+let selectedProvider = 'codex';
 let selectedClaudeSession = null; // { id, projectPath, cwd, summary, customName }
 let pendingSessionOpts = null;
 let isConfirming = false;  // 防止重复点击
@@ -172,12 +174,39 @@ function addProjectToRecent(path) {
   saveRecentProjects(filtered);
 }
 
+function updateProviderUI() {
+  const isClaude = selectedProvider === 'claude';
+  if (!isClaude) {
+    selectedClaudeSession = null;
+    if (claudeLoadTimer) {
+      clearTimeout(claudeLoadTimer);
+      claudeLoadTimer = null;
+    }
+    projectClaudeSection.style.display = 'none';
+    projectClaudeList.innerHTML = '';
+    return;
+  }
+
+  const path = selectedProjectPath || projectPathInput.value.trim();
+  if (!path) {
+    projectClaudeSection.style.display = 'none';
+    projectClaudeList.innerHTML = '';
+    return;
+  }
+
+  scheduleLoadClaudeSessions(path);
+}
+
 function showProjectDialog(sessionOpts = {}) {
   pendingSessionOpts = sessionOpts;
   selectedProjectPath = null;
+  selectedProvider = 'codex';
   selectedClaudeSession = null;
   projectPathInput.value = '';
   projectDialogConfirm.disabled = true;
+  providerInputs.forEach(input => {
+    input.checked = input.value === selectedProvider;
+  });
   projectClaudeSection.style.display = 'none';
   projectClaudeList.innerHTML = '';
 
@@ -222,7 +251,7 @@ function renderRecentProjects() {
 
       recentProjectsList.querySelectorAll('.project-item').forEach(el => el.classList.remove('selected'));
       item.classList.add('selected');
-      scheduleLoadClaudeSessions(project.path);
+      if (selectedProvider === 'claude') scheduleLoadClaudeSessions(project.path);
     });
 
     recentProjectsList.appendChild(item);
@@ -269,9 +298,15 @@ async function loadClaudeSessionsForPath(folderPath) {
       <span class="project-claude-item-check">✓</span>
     `;
     item.addEventListener('click', () => {
-      selectedClaudeSession = s;
-      projectClaudeList.querySelectorAll('.project-claude-item').forEach(el => el.classList.remove('selected'));
-      item.classList.add('selected');
+      if (selectedClaudeSession === s) {
+        // 再次点击取消选择
+        selectedClaudeSession = null;
+        item.classList.remove('selected');
+      } else {
+        selectedClaudeSession = s;
+        projectClaudeList.querySelectorAll('.project-claude-item').forEach(el => el.classList.remove('selected'));
+        item.classList.add('selected');
+      }
     });
     projectClaudeList.appendChild(item);
   }
@@ -305,7 +340,7 @@ async function confirmProjectSelection() {
     addProjectToRecent(path);
 
     const cs = selectedClaudeSession;
-    if (cs) {
+    if (selectedProvider === 'claude' && cs) {
       // 选择了历史会话：直接 resume
       const claudeName = cs.customName || (cs.summary ? cs.summary.slice(0, 50) : null);
       const sessionId = await createSession(null, {
@@ -322,7 +357,7 @@ async function confirmProjectSelection() {
         }, 500);
       }
     } else {
-      // 未选历史会话：新建 claude 会话
+      // 未选历史会话：按供应商新建会话
       const sessionId = await createSession(null, {
         ...pendingSessionOpts,
         cwd: path,
@@ -330,7 +365,7 @@ async function confirmProjectSelection() {
       hideProjectDialog();
       if (sessionId) {
         setTimeout(() => {
-          window.termAPI.write({ id: sessionId, data: 'claude\r' });
+          window.termAPI.write({ id: sessionId, data: `${selectedProvider}\r` });
         }, 500);
       }
     }
@@ -350,7 +385,11 @@ btnBrowseFolder.addEventListener('click', async () => {
     selectedProjectPath = folderPath;
     projectDialogConfirm.disabled = false;
     recentProjectsList.querySelectorAll('.project-item').forEach(el => el.classList.remove('selected'));
-    scheduleLoadClaudeSessions(folderPath);
+    if (selectedProvider === 'claude') {
+      scheduleLoadClaudeSessions(folderPath);
+    } else {
+      updateProviderUI();
+    }
   }
 });
 
@@ -360,12 +399,21 @@ projectPathInput.addEventListener('input', () => {
   selectedProjectPath = path;
   projectDialogConfirm.disabled = !path;
   recentProjectsList.querySelectorAll('.project-item').forEach(el => el.classList.remove('selected'));
-  if (path) {
+  if (path && selectedProvider === 'claude') {
     scheduleLoadClaudeSessions(path);
   } else {
     projectClaudeSection.style.display = 'none';
+    projectClaudeList.innerHTML = '';
     selectedClaudeSession = null;
   }
+});
+
+providerInputs.forEach(input => {
+  input.addEventListener('change', () => {
+    if (!input.checked) return;
+    selectedProvider = input.value;
+    updateProviderUI();
+  });
 });
 
 // 点击遮罩层关闭
@@ -714,13 +762,7 @@ async function createSession(tabId, opts = {}) {
     e.stopPropagation();
   }, true);
 
-  // 尝试 WebGL 加速
-  try {
-    const webgl = new WebglAddon();
-    term.loadAddon(webgl);
-  } catch (e) {
-    console.warn('WebGL addon failed, using canvas renderer');
-  }
+  // WebGL 加速延迟到 focus 之后加载（见下方），避免渲染器切换重置 IME 状态
 
   // 创建 PTY
   await window.termAPI.createSession({
@@ -845,10 +887,27 @@ async function createSession(tabId, opts = {}) {
     fitSession(sessionId);
     term.focus();
     // 确保 xterm 内部 textarea 获得焦点（修复 IME 中文输入问题）
+    const xtermTextarea = wrapper.querySelector('.xterm-helper-textarea');
+    if (xtermTextarea) xtermTextarea.focus();
+
+    // WebGL 渲染器加载放在 focus 之后，避免渲染器切换（DOM 变动）重置 Windows IME 状态
+    // 延迟 500ms 确保 IME 已完成绑定
     setTimeout(() => {
-      const xtermTextarea = wrapper.querySelector('.xterm-helper-textarea');
-      if (xtermTextarea) xtermTextarea.focus();
-    }, 50);
+      try {
+        const webgl = new WebglAddon();
+        term.loadAddon(webgl);
+        // WebGL 切换后重新 focus textarea，让 IME 重新绑定
+        requestAnimationFrame(() => {
+          const ta = wrapper.querySelector('.xterm-helper-textarea');
+          if (ta) {
+            ta.blur();
+            ta.focus();
+          }
+        });
+      } catch (e) {
+        console.warn('WebGL addon failed, using canvas renderer');
+      }
+    }, 500);
   });
 
   return sessionId;
@@ -858,6 +917,10 @@ async function destroySession(sessionId, skipRender) {
   const session = allSessions.get(sessionId);
   if (!session) return;
 
+  if (session._claudeDetectTimer) {
+    clearInterval(session._claudeDetectTimer);
+    session._claudeDetectTimer = null;
+  }
   window.termAPI.kill({ id: sessionId });
   session.term.dispose();
   session.element.remove();
@@ -875,9 +938,21 @@ async function destroySession(sessionId, skipRender) {
     renderPanes();
     renderTabs();
     updateInfo();
-    // 聚焦剩余面板
+    // 聚焦剩余面板 — 必须延迟到 renderPanes 内部的 fitAllSessions (280ms) 完成之后，
+    // 否则 fit 触发 xterm DOM 重算会导致 textarea 失焦、Windows IME 中文输入丢失
     if (tab && tab.focusedSession) {
-      focusSession(tab.focusedSession);
+      const sid = tab.focusedSession;
+      setTimeout(() => {
+        focusSession(sid);
+        // 双重保险：再次确保 textarea 获得焦点
+        requestAnimationFrame(() => {
+          const s = allSessions.get(sid);
+          if (s) {
+            const ta = s.element.querySelector('.xterm-helper-textarea');
+            if (ta) { ta.blur(); ta.focus(); }
+          }
+        });
+      }, 350);
     }
   }
 }
@@ -1429,6 +1504,7 @@ function createFolderNode(parentEl, entry, level) {
   const folderRow = document.createElement('div');
   folderRow.className = 'tree-item';
   folderRow.style.paddingLeft = (level * 16 + 8) + 'px';
+  folderRow.dataset.path = entry.path;
 
   const arrow = document.createElement('span');
   arrow.className = 'tree-arrow';
@@ -1546,6 +1622,7 @@ function createFileNode(parentEl, entry, level) {
   const fileRow = document.createElement('div');
   fileRow.className = 'tree-item';
   fileRow.style.paddingLeft = (level * 16 + 24) + 'px';
+  fileRow.dataset.path = entry.path;
 
   const ext = entry.name.includes('.') ? entry.name.split('.').pop().toLowerCase() : '';
   const icon = document.createElement('span');
@@ -1603,14 +1680,16 @@ function createNewItem(type, parentDir) {
   let targetContainer = fileTreeEl;
 
   if (parentDir !== currentRootPath) {
-    // 尝试找到对应文件夹的 children 容器
+    // 通过 data-path 属性精确匹配目标文件夹的 children 容器
+    const folderName = parentDir.split('\\').pop() || parentDir.split('/').pop();
     const allItems = fileTreeEl.querySelectorAll('.tree-item');
     for (const item of allItems) {
       const nameEl = item.querySelector('.tree-name');
-      if (nameEl && item.nextElementSibling && item.nextElementSibling.classList.contains('tree-folder-children')) {
-        // 检查路径匹配（通过 contextmenu 传入的 parentDir）
-        targetContainer = item.nextElementSibling;
-        // 确保展开
+      const container = item.nextElementSibling;
+      if (nameEl && nameEl.textContent === folderName &&
+          container && container.classList.contains('tree-folder-children') &&
+          item.dataset.path === parentDir) {
+        targetContainer = container;
         targetContainer.classList.remove('collapsed');
         const arrow = item.querySelector('.tree-arrow');
         if (arrow) arrow.textContent = '▼';
@@ -1715,6 +1794,11 @@ function showContextMenu(e, itemPath, isDirectory) {
     items.push({ label: '✏️ 重命名', action: () => startTreeRename(itemPath, isDirectory) });
     items.push({ label: '🗑️ 删除', action: () => deleteTreeItem(itemPath, isDirectory) });
   }
+  items.push({ label: '📋 复制路径', action: () => {
+    navigator.clipboard.writeText(itemPath).then(() => {
+      showToast('路径已复制');
+    });
+  }});
   items.push({ label: '📂 在资源管理器中显示', action: () => window.termAPI.showInExplorer(itemPath) });
 
   for (const item of items) {
@@ -1751,63 +1835,60 @@ function hideContextMenu() {
 
 // ---- 文件树重命名 ----
 function startTreeRename(itemPath, isDirectory) {
-  // 找到对应的 tree-item 元素
-  const allItems = fileTreeEl.querySelectorAll('.tree-item');
+  // 通过 data-path 精确匹配对应的 tree-item 元素
   const itemName = itemPath.split('\\').pop() || itemPath.split('/').pop();
   const parentDir = itemPath.substring(0, itemPath.length - itemName.length - 1);
+  const row = fileTreeEl.querySelector(`.tree-item[data-path="${CSS.escape(itemPath)}"]`);
+  if (!row) return;
+  const nameEl = row.querySelector('.tree-name');
+  if (!nameEl) return;
 
-  for (const row of allItems) {
-    const nameEl = row.querySelector('.tree-name');
-    if (!nameEl || nameEl.textContent !== itemName) continue;
+  const input = document.createElement('input');
+  input.className = 'tree-item-input';
+  input.value = itemName;
+  nameEl.textContent = '';
+  nameEl.appendChild(input);
+  input.focus();
+  // 选中文件名（不含扩展名）
+  const dotIdx = itemName.lastIndexOf('.');
+  if (!isDirectory && dotIdx > 0) {
+    input.setSelectionRange(0, dotIdx);
+  } else {
+    input.select();
+  }
 
-    const input = document.createElement('input');
-    input.className = 'tree-item-input';
-    input.value = itemName;
-    nameEl.textContent = '';
-    nameEl.appendChild(input);
-    input.focus();
-    // 选中文件名（不含扩展名）
-    const dotIdx = itemName.lastIndexOf('.');
-    if (!isDirectory && dotIdx > 0) {
-      input.setSelectionRange(0, dotIdx);
-    } else {
-      input.select();
+  const commit = async () => {
+    const newName = input.value.trim();
+    if (newName && newName !== itemName) {
+      const newPath = parentDir + '\\' + newName;
+      const result = await window.termAPI.rename(itemPath, newPath);
+      if (!result.success) {
+        console.error('重命名失败:', result.error);
+      }
     }
+    refreshFileTree();
+  };
 
-    const commit = async () => {
-      const newName = input.value.trim();
-      if (newName && newName !== itemName) {
-        const newPath = parentDir + '\\' + newName;
-        const result = await window.termAPI.rename(itemPath, newPath);
-        if (!result.success) {
-          console.error('重命名失败:', result.error);
+  const cancel = () => {
+    nameEl.textContent = itemName;
+  };
+
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+    if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+    ev.stopPropagation();
+  });
+  input.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (nameEl.contains(input)) {
+        if (input.value.trim() && input.value.trim() !== itemName) {
+          commit();
+        } else {
+          cancel();
         }
       }
-      refreshFileTree();
-    };
-
-    const cancel = () => {
-      nameEl.textContent = itemName;
-    };
-
-    input.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-      if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
-      ev.stopPropagation();
-    });
-    input.addEventListener('blur', () => {
-      setTimeout(() => {
-        if (nameEl.contains(input)) {
-          if (input.value.trim() && input.value.trim() !== itemName) {
-            commit();
-          } else {
-            cancel();
-          }
-        }
-      }, 100);
-    });
-    break;
-  }
+    }, 100);
+  });
 }
 
 // ---- 文件树删除 ----

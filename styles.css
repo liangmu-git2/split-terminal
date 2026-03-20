@@ -1431,6 +1431,35 @@ html, body {
 }
 
 /* ============ 项目对话框 Claude 历史会话 ============ */
+.provider-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.provider-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.provider-option:hover {
+  border-color: var(--accent);
+  background: var(--bg-active);
+}
+
+.provider-option input {
+  margin: 0;
+}
+
 .project-claude-section {
   margin-top: 16px;
   border-top: 1px solid var(--border);
@@ -1526,4 +1555,3 @@ html, body {
 .project-claude-item.selected .project-claude-item-check {
   opacity: 1;
 }
-

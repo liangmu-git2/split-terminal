@@ -629,28 +629,42 @@ function extractSummaryAndCwd(lines) {
   let cwd = '';
   let slug = '';
   let firstUserSessionId = '';
+  let hasAssistant = false;
+  let hasClearCommand = false;
+  let realUserCount = 0; // 非 meta 的 user 消息数
   for (const line of lines) {
     if (!line.trim()) continue;
     try {
       const msg = JSON.parse(line);
       if (!cwd && msg.cwd) cwd = msg.cwd;
       if (!slug && msg.slug) slug = msg.slug;
-      if (!summary && msg.type === 'user') {
+      if (msg.type === 'assistant') hasAssistant = true;
+      if (msg.type === 'user') {
         // 记录第一条 user 消息中的 sessionId（用于检测续接会话）
         if (!firstUserSessionId && msg.sessionId) firstUserSessionId = msg.sessionId;
-        const content = msg.message?.content;
-        if (typeof content === 'string') {
-          summary = content.slice(0, 80).replace(/\n/g, ' ');
-        } else if (Array.isArray(content)) {
-          const textBlock = content.find(b => typeof b === 'string' || b.type === 'text');
-          const text = typeof textBlock === 'string' ? textBlock : textBlock?.text || '';
-          summary = text.slice(0, 80).replace(/\n/g, ' ');
+        if (!msg.isMeta) {
+          realUserCount++;
+          const content = msg.message?.content;
+          const text = typeof content === 'string' ? content : '';
+          if (text.includes('<command-name>/clear</command-name>')) hasClearCommand = true;
+        }
+        if (!summary) {
+          const content = msg.message?.content;
+          if (typeof content === 'string') {
+            summary = content.slice(0, 80).replace(/\n/g, ' ');
+          } else if (Array.isArray(content)) {
+            const textBlock = content.find(b => typeof b === 'string' || b.type === 'text');
+            const text = typeof textBlock === 'string' ? textBlock : textBlock?.text || '';
+            summary = text.slice(0, 80).replace(/\n/g, ' ');
+          }
         }
       }
       if (summary && cwd && slug) break;
     } catch { continue; }
   }
-  return { summary, cwd, slug, firstUserSessionId };
+  // /clear 产生的空会话：没有 assistant 回复，唯一的真实 user 消息就是 /clear 命令
+  const isClearOnly = hasClearCommand && !hasAssistant && realUserCount <= 1;
+  return { summary, cwd, slug, firstUserSessionId, isClearOnly };
 }
 
 ipcMain.handle('claude:listSessions', async (event, { rootPath } = {}) => {
@@ -698,7 +712,8 @@ ipcMain.handle('claude:listSessions', async (event, { rootPath } = {}) => {
         try {
           const stat = fs.statSync(filePath);
           const firstLines = await readFirstLines(filePath, 50);
-          const { summary, cwd, slug, firstUserSessionId } = extractSummaryAndCwd(firstLines);
+          const { summary, cwd, slug, firstUserSessionId, isClearOnly } = extractSummaryAndCwd(firstLines);
+          if (isClearOnly) continue; // 跳过 /clear 产生的空会话
           if (!summary && !nameMap[sessionId]) continue;
           sessionInfos.push({
             sessionId, filePath, stat, summary, cwd, slug, firstUserSessionId,
@@ -742,6 +757,29 @@ ipcMain.handle('claude:listSessions', async (event, { rootPath } = {}) => {
         }
       }
 
+      // 第四遍：将 noSlug 中通过 firstUserSessionId 互相关联的会话合并
+      // 场景：/clear 后产生的新会话没有 slug，其 firstUserSessionId 指向原会话（也无 slug）
+      const noSlugById = new Map(noSlug.map(info => [info.sessionId, info]));
+      const noSlugGroups = new Map(); // 原始 sessionId -> { original, latest, allInfos }
+      const noSlugMerged = new Set(); // 已被合并的 sessionId
+      for (const info of noSlug) {
+        if (noSlugMerged.has(info.sessionId)) continue;
+        const parentId = info.firstUserSessionId;
+        if (parentId && parentId !== info.sessionId && noSlugById.has(parentId)) {
+          // 当前 info 是续接会话，parent 是原始会话
+          const parent = noSlugById.get(parentId);
+          const groupKey = parentId;
+          if (!noSlugGroups.has(groupKey)) {
+            noSlugGroups.set(groupKey, { original: parent, latest: parent, allInfos: [parent] });
+            noSlugMerged.add(parentId);
+          }
+          const group = noSlugGroups.get(groupKey);
+          group.allInfos.push(info);
+          if (info.stat.mtimeMs > group.latest.stat.mtimeMs) group.latest = info;
+          noSlugMerged.add(info.sessionId);
+        }
+      }
+
       // 合并结果：收集每组所有 sessionId 用于置顶/名称判断
       const merged = [];
       for (const [, group] of slugGroups) {
@@ -750,8 +788,15 @@ ipcMain.handle('claude:listSessions', async (event, { rootPath } = {}) => {
         const allIds = [...new Set(group.allInfos.map(i => i.sessionId))];
         merged.push({ ...display, sessionId: latest.sessionId, stat: latest.stat, allIds });
       }
+      for (const [, group] of noSlugGroups) {
+        const display = group.original || group.latest;
+        const allIds = [...new Set(group.allInfos.map(i => i.sessionId))];
+        merged.push({ ...display, sessionId: group.latest.sessionId, stat: group.latest.stat, allIds });
+      }
       for (const info of noSlug) {
-        merged.push({ ...info, allIds: [info.sessionId] });
+        if (!noSlugMerged.has(info.sessionId)) {
+          merged.push({ ...info, allIds: [info.sessionId] });
+        }
       }
 
       for (const info of merged) {
@@ -866,7 +911,18 @@ ipcMain.handle('claude:findLatestSession', async (event, { cwd, afterTime }) => 
           if (birthTime < afterTime) continue;
 
           const firstLines = await readFirstLines(filePath, 50);
-          const { summary, cwd: fileCwd } = extractSummaryAndCwd(firstLines);
+          const { summary, cwd: fileCwd, firstUserSessionId, isClearOnly } = extractSummaryAndCwd(firstLines);
+          const sessionId = file.replace('.jsonl', '');
+
+          // 跳过 /clear 产生的空会话
+          if (isClearOnly) continue;
+
+          // 跳过没有用户消息的文件（如 file-history-snapshot 备份文件）
+          if (!summary && !fileCwd) continue;
+
+          // 跳过续接会话（firstUserSessionId 不等于自身 ID，说明是从其他会话续接来的）
+          // 这些会话应该通过原始会话来访问
+          if (firstUserSessionId && firstUserSessionId !== sessionId) continue;
 
           // 如果文件有 cwd 且与目标 cwd 不匹配，跳过
           if (fileCwd && cwd) {
@@ -882,12 +938,12 @@ ipcMain.handle('claude:findLatestSession', async (event, { cwd, afterTime }) => 
             try {
               if (fs.existsSync(namesFile)) {
                 const nameMap = JSON.parse(fs.readFileSync(namesFile, 'utf-8'));
-                customName = nameMap[file.replace('.jsonl', '')] || null;
+                customName = nameMap[sessionId] || null;
               }
             } catch { /* ignore */ }
 
             best = {
-              id: file.replace('.jsonl', ''),
+              id: sessionId,
               projectPath: projDir.name,
               summary: summary || '',
               customName,
