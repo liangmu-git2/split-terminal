@@ -64,6 +64,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GH_TOKEN }}
       - uses: actions/download-artifact@v4
         with:
           name: windows-dist
@@ -84,3 +88,17 @@ jobs:
             dist-mac/latest-mac.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+      - name: Update README download links
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s|/download/v[0-9.]\+/|/download/v${VERSION}/|g" README.md
+          sed -i "s|Split\.Terminal\.Setup\.[0-9.]\+\.exe|Split.Terminal.Setup.${VERSION}.exe|g" README.md
+          sed -i "s|Split\.Terminal-[0-9.]\+\.dmg|Split.Terminal-${VERSION}.dmg|g" README.md
+          sed -i "s|Split\.Terminal-[0-9.]\+-arm64\.dmg|Split.Terminal-${VERSION}-arm64.dmg|g" README.md
+      - name: Commit and push README
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet || git commit -m "docs: update download links to v${GITHUB_REF_NAME#v}"
+          git push
