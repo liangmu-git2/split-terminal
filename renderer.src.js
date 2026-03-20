@@ -3338,6 +3338,14 @@ window.addEventListener('beforeunload', () => {
   // 更新日志数据
   const CHANGELOG = [
     {
+      version: '1.5.1',
+      date: '2026-03-20',
+      notes: [
+        '新增：README 提供国内加速下载链接（ghproxy / 99988866 双通道）',
+        '优化：CI 发版后自动更新 README 中的下载链接版本号',
+      ],
+    },
+    {
       version: '1.4.2',
       date: '2026-03-16',
       notes: [
