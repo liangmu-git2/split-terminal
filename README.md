@@ -44,9 +44,11 @@
 - 推送当前发布 tag 到 Gitee
 - 在 Gitee 创建或更新同名 Release
 - 上传 `.exe`、`.dmg`、`latest.yml`、`blockmap` 等发布产物
+- 超过 `100 MiB` 的单个附件会自动跳过，避免整条同步任务失败
 
 建议：
 
 - 先在 Gitee 手动创建同名仓库
 - Gitee 默认分支使用 `main`
+- Intel 版 macOS 安装包如果超过 `100 MiB`，通常不会出现在 Gitee Release 附件里
 - 自动同步失败时，不影响 GitHub Release 主流程
