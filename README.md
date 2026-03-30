@@ -25,3 +25,28 @@
 - [加速下载 - 99988866](https://gh.api.99988866.xyz/https://github.com/liangmu-git2/split-terminal/releases/download/v1.6.0/Split.Terminal-1.6.0-arm64.dmg)
 
 > 加速链接的原理是在 GitHub 下载地址前加代理前缀，如果某个加速服务不可用，可尝试另一个。
+
+## 维护者说明
+
+### 可选：发版后自动同步到 Gitee
+
+当前仓库已支持在 GitHub Release 成功后，自动把源码、tag 和安装包同步到 Gitee Release。
+
+需要提前在 GitHub 仓库里配置以下 Actions 凭据：
+
+- `Secret`: `GITEE_ACCESS_TOKEN`
+- `Variable`: `GITEE_OWNER`
+- `Variable`: `GITEE_REPO`
+
+同步行为：
+
+- 推送 `main` 分支到 Gitee
+- 推送当前发布 tag 到 Gitee
+- 在 Gitee 创建或更新同名 Release
+- 上传 `.exe`、`.dmg`、`latest.yml`、`blockmap` 等发布产物
+
+建议：
+
+- 先在 Gitee 手动创建同名仓库
+- Gitee 默认分支使用 `main`
+- 自动同步失败时，不影响 GitHub Release 主流程

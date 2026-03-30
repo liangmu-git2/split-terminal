@@ -102,3 +102,129 @@ jobs:
           git add README.md
           git diff --cached --quiet || git commit -m "docs: update download links to v${GITHUB_REF_NAME#v}"
           git push
+
+  sync-gitee:
+    needs: [release]
+    if: ${{ secrets.GITEE_ACCESS_TOKEN != '' && vars.GITEE_OWNER != '' && vars.GITEE_REPO != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-dist
+          path: dist-win
+      - uses: actions/download-artifact@v4
+        with:
+          name: mac-dist
+          path: dist-mac
+      - name: Push code and tag to Gitee
+        env:
+          GITEE_ACCESS_TOKEN: ${{ secrets.GITEE_ACCESS_TOKEN }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+        run: |
+          git remote add gitee "https://oauth2:${GITEE_ACCESS_TOKEN}@gitee.com/${GITEE_OWNER}/${GITEE_REPO}.git"
+          git push gitee HEAD:main
+          git push gitee "refs/tags/${GITHUB_REF_NAME}"
+      - name: Create or update Gitee release
+        id: gitee-release
+        env:
+          GITEE_ACCESS_TOKEN: ${{ secrets.GITEE_ACCESS_TOKEN }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITHUB_RELEASE_TAG: ${{ github.ref_name }}
+          GITHUB_REPOSITORY_NAME: ${{ github.repository }}
+        run: |
+          python <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          token = os.environ["GITEE_ACCESS_TOKEN"]
+          owner = os.environ["GITEE_OWNER"]
+          repo = os.environ["GITEE_REPO"]
+          tag = os.environ["GITHUB_RELEASE_TAG"]
+          github_repo = os.environ["GITHUB_REPOSITORY_NAME"]
+          release_body = (
+              f"同步自 GitHub Release {tag}\n\n"
+              f"GitHub Release: https://github.com/{github_repo}/releases/tag/{tag}\n"
+          )
+          base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
+
+          def api(method, path, data=None):
+              url = base + path
+              payload = None
+              headers = {
+                  "User-Agent": "GitHub Actions",
+                  "Accept": "application/json",
+              }
+              if data is not None:
+                  encoded = urllib.parse.urlencode(data).encode("utf-8")
+                  payload = encoded
+                  headers["Content-Type"] = "application/x-www-form-urlencoded"
+              req = urllib.request.Request(url, data=payload, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      body = resp.read().decode("utf-8")
+                      return json.loads(body) if body else {}
+              except urllib.error.HTTPError as exc:
+                  detail = exc.read().decode("utf-8", errors="ignore")
+                  raise RuntimeError(f"{method} {path} failed: {exc.code} {detail}") from exc
+
+          releases = api("GET", f"/releases?access_token={urllib.parse.quote(token)}&per_page=100")
+          current = next((item for item in releases if item.get("tag_name") == tag), None)
+
+          if current:
+              current = api("PATCH", f"/releases/{current['id']}", {
+                  "access_token": token,
+                  "tag_name": tag,
+                  "name": tag,
+                  "body": release_body,
+                  "prerelease": "false",
+                  "target_commitish": "main",
+              })
+          else:
+              current = api("POST", "/releases", {
+                  "access_token": token,
+                  "tag_name": tag,
+                  "name": tag,
+                  "body": release_body,
+                  "prerelease": "false",
+                  "target_commitish": "main",
+              })
+
+          attach_files = api(
+              "GET",
+              f"/releases/{current['id']}/attach_files?access_token={urllib.parse.quote(token)}&per_page=100",
+          )
+          for item in attach_files:
+              api("DELETE", f"/releases/{current['id']}/attach_files/{item['id']}?access_token={urllib.parse.quote(token)}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"release_id={current['id']}\n")
+          PY
+      - name: Upload release assets to Gitee
+        env:
+          GITEE_ACCESS_TOKEN: ${{ secrets.GITEE_ACCESS_TOKEN }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          GITEE_RELEASE_ID: ${{ steps.gitee-release.outputs.release_id }}
+        run: |
+          for file in dist-win/* dist-mac/*; do
+            if [ ! -f "$file" ]; then
+              continue
+            fi
+            curl --fail --retry 3 --retry-delay 2 \
+              -X POST "https://gitee.com/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${GITEE_RELEASE_ID}/attach_files" \
+              -F "access_token=${GITEE_ACCESS_TOKEN}" \
+              -F "file=@${file}"
+          done
