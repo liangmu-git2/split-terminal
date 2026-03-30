@@ -603,6 +603,10 @@ ipcMain.handle('lastFolder:save', (event, folderPath) => {
 
 // ============ Claude 会话管理 ============
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
+const CODEX_HOME_DIR = path.join(os.homedir(), '.codex');
+const CODEX_SESSIONS_DIR = path.join(CODEX_HOME_DIR, 'sessions');
+const CODEX_ARCHIVED_SESSIONS_DIR = path.join(CODEX_HOME_DIR, 'archived_sessions');
+const CODEX_SESSION_INDEX_FILE = path.join(CODEX_HOME_DIR, 'session_index.jsonl');
 const readline = require('readline');
 
 // 只读取文件前 N 行，避免读取整个大文件
@@ -667,7 +671,126 @@ function extractSummaryAndCwd(lines) {
   return { summary, cwd, slug, firstUserSessionId, isClearOnly };
 }
 
-ipcMain.handle('claude:listSessions', async (event, { rootPath } = {}) => {
+function normalizePathForCompare(p) {
+  return (p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function collectJsonlFiles(dirPath, into = []) {
+  if (!fs.existsSync(dirPath)) return into;
+  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      collectJsonlFiles(fullPath, into);
+    } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      into.push(fullPath);
+    }
+  }
+  return into;
+}
+
+function extractCodexSessionIdFromPath(filePath) {
+  const match = filePath.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i);
+  return match ? match[1] : '';
+}
+
+function extractCodexCwd(lines) {
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const msg = JSON.parse(line);
+      if (msg.type === 'session_meta' && msg.payload?.cwd) {
+        return msg.payload.cwd;
+      }
+    } catch {
+      // ignore malformed lines
+    }
+  }
+  return '';
+}
+
+function getCodexSessionMetaFile() {
+  return path.join(app.getPath('userData'), 'codex-session-meta.json');
+}
+
+function readCodexSessionMeta() {
+  try {
+    const metaFile = getCodexSessionMetaFile();
+    if (!fs.existsSync(metaFile)) return { names: {}, pins: [] };
+    const raw = JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
+    const names = {};
+    if (raw && typeof raw.names === 'object' && raw.names && !Array.isArray(raw.names)) {
+      for (const [sessionId, name] of Object.entries(raw.names)) {
+        if (typeof name !== 'string') continue;
+        const trimmed = name.trim();
+        if (trimmed) names[sessionId] = trimmed;
+      }
+    }
+    const pins = Array.isArray(raw?.pins)
+      ? [...new Set(raw.pins.filter(id => typeof id === 'string' && id))]
+      : [];
+    return { names, pins };
+  } catch {
+    return { names: {}, pins: [] };
+  }
+}
+
+function writeCodexSessionMeta(meta) {
+  const normalized = {
+    names: {},
+    pins: Array.isArray(meta?.pins)
+      ? [...new Set(meta.pins.filter(id => typeof id === 'string' && id))]
+      : [],
+  };
+
+  if (meta && typeof meta.names === 'object' && meta.names && !Array.isArray(meta.names)) {
+    for (const [sessionId, name] of Object.entries(meta.names)) {
+      if (typeof name !== 'string') continue;
+      const trimmed = name.trim();
+      if (trimmed) normalized.names[sessionId] = trimmed;
+    }
+  }
+
+  fs.writeFileSync(getCodexSessionMetaFile(), JSON.stringify(normalized, null, 2), 'utf-8');
+  return normalized;
+}
+
+function buildCodexSessionFileMap() {
+  const fileMap = new Map();
+  for (const filePath of collectJsonlFiles(CODEX_SESSIONS_DIR)) {
+    const sessionId = extractCodexSessionIdFromPath(filePath);
+    if (!sessionId) continue;
+    fileMap.set(sessionId, { filePath, archived: false });
+  }
+  for (const filePath of collectJsonlFiles(CODEX_ARCHIVED_SESSIONS_DIR)) {
+    const sessionId = extractCodexSessionIdFromPath(filePath);
+    if (!sessionId || fileMap.has(sessionId)) continue;
+    fileMap.set(sessionId, { filePath, archived: true });
+  }
+  return fileMap;
+}
+
+function readCodexSessionIndexEntries() {
+  if (!fs.existsSync(CODEX_SESSION_INDEX_FILE)) return [];
+  const lines = fs.readFileSync(CODEX_SESSION_INDEX_FILE, 'utf-8').split(/\r?\n/).filter(Boolean);
+  const entries = [];
+  for (const line of lines) {
+    try {
+      const item = JSON.parse(line);
+      if (!item.id || !item.updated_at) continue;
+      entries.push(item);
+    } catch {
+      // ignore malformed lines
+    }
+  }
+  return entries;
+}
+
+function writeCodexSessionIndexEntries(entries) {
+  const content = entries.map(item => JSON.stringify(item)).join(os.EOL);
+  fs.writeFileSync(CODEX_SESSION_INDEX_FILE, content ? content + os.EOL : '', 'utf-8');
+}
+
+async function listClaudeSessionsInternal({ rootPath } = {}) {
   try {
     if (!fs.existsSync(CLAUDE_PROJECTS_DIR)) return [];
 
@@ -815,6 +938,7 @@ ipcMain.handle('claude:listSessions', async (event, { rootPath } = {}) => {
         const isPinned = info.allIds.some(id => pinSet.has(id));
 
         results.push({
+          provider: 'claude',
           id: sessionId,
           projectPath: projDir.name,
           projectName,
@@ -838,6 +962,83 @@ ipcMain.handle('claude:listSessions', async (event, { rootPath } = {}) => {
     console.error('claude:listSessions error:', e);
     return [];
   }
+}
+
+async function listCodexSessionsInternal({ rootPath } = {}) {
+  try {
+    if (!fs.existsSync(CODEX_SESSION_INDEX_FILE)) return [];
+
+    const meta = readCodexSessionMeta();
+    const pinSet = new Set(meta.pins);
+    const fileMap = buildCodexSessionFileMap();
+    const indexEntries = readCodexSessionIndexEntries();
+    indexEntries.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+
+    const results = [];
+    const normRoot = rootPath ? normalizePathForCompare(rootPath) : '';
+
+    for (const entry of indexEntries) {
+      const fileInfo = fileMap.get(entry.id);
+      if (!fileInfo) continue;
+
+      let cwd = '';
+      try {
+        cwd = extractCodexCwd(await readFirstLines(fileInfo.filePath, 3));
+      } catch {
+        cwd = '';
+      }
+
+      if (normRoot) {
+        const normCwd = normalizePathForCompare(cwd);
+        if (!normCwd || !normCwd.startsWith(normRoot)) continue;
+      }
+
+      const trimmedCwd = cwd.replace(/[\\/]+$/, '');
+      const projectName = trimmedCwd ? path.basename(trimmedCwd) || trimmedCwd : 'Codex';
+      const summary = entry.thread_name || `Codex 会话 ${entry.id.slice(0, 8)}`;
+      const customName = meta.names[entry.id] || null;
+      results.push({
+        provider: 'codex',
+        id: entry.id,
+        projectPath: '',
+        projectName,
+        cwd,
+        summary,
+        lastActive: entry.updated_at,
+        customName,
+        pinned: pinSet.has(entry.id),
+        archived: fileInfo.archived,
+      });
+    }
+
+    results.sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      return b.lastActive.localeCompare(a.lastActive);
+    });
+    return results.slice(0, 50);
+  } catch (e) {
+    console.error('codex:listSessions error:', e);
+    return [];
+  }
+}
+
+ipcMain.handle('claude:listSessions', async (event, { rootPath } = {}) => {
+  return listClaudeSessionsInternal({ rootPath });
+});
+
+ipcMain.handle('conversation:listSessions', async (event, { rootPath, provider } = {}) => {
+  const results = [];
+  if (!provider || provider === 'claude') {
+    results.push(...await listClaudeSessionsInternal({ rootPath }));
+  }
+  if (!provider || provider === 'codex') {
+    results.push(...await listCodexSessionsInternal({ rootPath }));
+  }
+  results.sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    return b.lastActive.localeCompare(a.lastActive);
+  });
+  return results.slice(0, 80);
 });
 
 ipcMain.handle('claude:renameSession', (event, { projectPath, sessionId, name }) => {
@@ -965,6 +1166,58 @@ ipcMain.handle('claude:deleteSession', (event, { projectPath, sessionId }) => {
   try {
     const filePath = path.join(CLAUDE_PROJECTS_DIR, projectPath, `${sessionId}.jsonl`);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('codex:renameSession', (event, { sessionId, name }) => {
+  try {
+    const meta = readCodexSessionMeta();
+    if (name) {
+      meta.names[sessionId] = name;
+    } else {
+      delete meta.names[sessionId];
+    }
+    writeCodexSessionMeta(meta);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('codex:pinSession', (event, { sessionId, pinned }) => {
+  try {
+    const meta = readCodexSessionMeta();
+    if (pinned) {
+      if (!meta.pins.includes(sessionId)) meta.pins.push(sessionId);
+    } else {
+      meta.pins = meta.pins.filter(id => id !== sessionId);
+    }
+    writeCodexSessionMeta(meta);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('codex:deleteSession', (event, { sessionId }) => {
+  try {
+    const fileMap = buildCodexSessionFileMap();
+    const fileInfo = fileMap.get(sessionId);
+    if (fileInfo?.filePath && fs.existsSync(fileInfo.filePath)) {
+      fs.unlinkSync(fileInfo.filePath);
+    }
+
+    const nextEntries = readCodexSessionIndexEntries().filter(entry => entry.id !== sessionId);
+    writeCodexSessionIndexEntries(nextEntries);
+
+    const meta = readCodexSessionMeta();
+    delete meta.names[sessionId];
+    meta.pins = meta.pins.filter(id => id !== sessionId);
+    writeCodexSessionMeta(meta);
+
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };

@@ -16,14 +16,17 @@
     <div id="toolbar-actions">
       <button id="btn-add" title="新建会话 (Ctrl+Shift+N)">+ 会话</button>
       <div id="claude-wrapper">
-        <button id="btn-claude" title="Claude 历史 (Ctrl+Shift+L)">🤖 Claude历史</button>
+        <button id="btn-claude" title="对话历史 (Ctrl+Shift+L)">🗂 对话历史</button>
         <div id="claude-dropdown" class="hidden"></div>
       </div>
       <div id="scheduler-wrapper">
         <button id="btn-scheduler" title="定时任务 (Ctrl+Shift+J)">⏰ 定时</button>
         <div id="scheduler-dropdown" class="hidden"></div>
       </div>
-      <button id="btn-theme" title="切换主题 (Ctrl+Shift+K)">🌓</button>
+      <div id="settings-wrapper">
+        <button id="btn-settings" title="常用设置">⚙ 常用设置</button>
+        <div id="settings-dropdown" class="hidden"></div>
+      </div>
       <div id="folder-wrapper">
         <button id="btn-open-folder" title="文件浏览器 (Ctrl+Shift+B)">📂 文件夹</button>
         <div id="recent-folders-dropdown" class="hidden"></div>
@@ -83,7 +86,7 @@
           </div>
         </div>
         <div id="project-claude-section" class="project-claude-section" style="display:none">
-          <label>该项目的 Claude 历史会话（可选）：</label>
+          <label id="project-history-label">该项目的历史会话（可选）：</label>
           <div id="project-claude-list" class="project-claude-list"></div>
         </div>
       </div>

@@ -5,52 +5,76 @@ const { WebglAddon } = require('@xterm/addon-webgl');
 // ============ 主题定义 ============
 const THEMES = {
   dark: {
-    background: '#0a0e17',
-    foreground: '#a0b0c0',
-    cursor: '#00d4ff',
-    cursorAccent: '#0a0e17',
-    selectionBackground: '#00d4ff33',
-    black: '#1a2332',
-    red: '#e0355f',
-    green: '#00c87a',
-    yellow: '#e0b800',
-    blue: '#0099ee',
-    magenta: '#b85ee0',
-    cyan: '#00c8b0',
-    white: '#a0b0c0',
-    brightBlack: '#3a4f6a',
-    brightRed: '#e05070',
-    brightGreen: '#20d090',
-    brightYellow: '#e0c830',
-    brightBlue: '#30aaee',
-    brightMagenta: '#c070e0',
-    brightCyan: '#20d0b8',
-    brightWhite: '#c0ccd8',
+    background: '#171b20',
+    foreground: '#f4f7fb',
+    cursor: '#c7d2de',
+    cursorAccent: '#171b20',
+    selectionBackground: '#8aa4c333',
+    black: '#20262d',
+    red: '#d98989',
+    green: '#93b387',
+    yellow: '#d6c08e',
+    blue: '#91a8c7',
+    magenta: '#b39ac9',
+    cyan: '#8eb8c2',
+    white: '#d9e1ea',
+    brightBlack: '#495360',
+    brightRed: '#e7a0a0',
+    brightGreen: '#a7c79b',
+    brightYellow: '#e4cea0',
+    brightBlue: '#a6bddc',
+    brightMagenta: '#c5addb',
+    brightCyan: '#a2ccd5',
+    brightWhite: '#ffffff',
   },
   light: {
-    background: '#eff1f5',
-    foreground: '#4c4f69',
-    cursor: '#dc8a78',
-    cursorAccent: '#eff1f5',
-    selectionBackground: '#7287fd44',
-    black: '#5c5f77',
-    red: '#d20f39',
-    green: '#40a02b',
-    yellow: '#df8e1d',
-    blue: '#1e66f5',
-    magenta: '#ea76cb',
-    cyan: '#179299',
-    white: '#acb0be',
-    brightBlack: '#6c6f85',
-    brightRed: '#d20f39',
-    brightGreen: '#40a02b',
-    brightYellow: '#df8e1d',
-    brightBlue: '#1e66f5',
-    brightMagenta: '#ea76cb',
-    brightCyan: '#179299',
-    brightWhite: '#bcc0cc',
+    background: '#f5f7fa',
+    foreground: '#2f3944',
+    cursor: '#6f8499',
+    cursorAccent: '#f5f7fa',
+    selectionBackground: '#90a4bf40',
+    black: '#5f6974',
+    red: '#bf6f6f',
+    green: '#6f9163',
+    yellow: '#b39a67',
+    blue: '#6985a4',
+    magenta: '#8a75a2',
+    cyan: '#628f98',
+    white: '#d6dde6',
+    brightBlack: '#7c8793',
+    brightRed: '#cf8181',
+    brightGreen: '#80a474',
+    brightYellow: '#c4ab77',
+    brightBlue: '#7a96b5',
+    brightMagenta: '#9b86b3',
+    brightCyan: '#73a0a9',
+    brightWhite: '#e8edf3',
   },
 };
+
+const LEGACY_YAHEI_DEFAULT_FONT_FAMILY = "'Microsoft YaHei UI', 'Microsoft YaHei', 'Cascadia Code', 'Consolas', monospace";
+const DEFAULT_TERMINAL_FONT_FAMILY = "'Consolas', 'Cascadia Code', 'Microsoft YaHei UI', 'Microsoft YaHei', monospace";
+const TERMINAL_FONT_PRESETS = [
+  {
+    label: 'Consolas（默认，适合终端）',
+    value: DEFAULT_TERMINAL_FONT_FAMILY,
+    description: '经典终端字体，整体更紧凑，中文自动回退到微软雅黑。',
+  },
+  {
+    label: 'Cascadia Code（现代代码风格）',
+    value: "'Cascadia Code', 'Consolas', 'Microsoft YaHei UI', 'Microsoft YaHei', monospace",
+    description: '更偏现代代码终端风格，英文和符号辨识度更高。',
+  },
+  {
+    label: '微软雅黑（适合中文）',
+    value: LEGACY_YAHEI_DEFAULT_FONT_FAMILY,
+    description: '中文阅读更自然，但终端里的英文和符号会显得更松一些。',
+  },
+];
+const MIN_FONT_SIZE = 8;
+const MAX_FONT_SIZE = 32;
+
+let showUpdaterChangelog = null;
 
 // ============ 布局算法 ============
 // 返回每个面板的 { left, top, width, height } 百分比
@@ -106,6 +130,8 @@ let tabCounter = 0;
 let activeTabId = null;
 let currentRootPath = null;
 let sidebarVisible = false;
+let globalFontSize = 14;
+let globalFontFamily = DEFAULT_TERMINAL_FONT_FAMILY;
 
 // tabs: Map<tabId, { name, sessions: [sessionId...], focusedSession }>
 const tabs = new Map();
@@ -124,6 +150,7 @@ function getAssociatedClaudeIds() {
 const container = document.getElementById('terminal-container');
 const tabsEl = document.getElementById('tabs');
 const sessionInfoEl = document.getElementById('session-info');
+const settingsDropdown = document.getElementById('settings-dropdown');
 
 // ============ 项目选择对话框管理 ============
 const projectDialog = document.getElementById('project-dialog');
@@ -136,13 +163,14 @@ const btnBrowseFolder = document.getElementById('btn-browse-folder');
 const providerInputs = Array.from(document.querySelectorAll('input[name="session-provider"]'));
 const projectClaudeSection = document.getElementById('project-claude-section');
 const projectClaudeList = document.getElementById('project-claude-list');
+const projectHistoryLabel = document.getElementById('project-history-label');
 
 let selectedProjectPath = null;
 let selectedProvider = 'codex';
-let selectedClaudeSession = null; // { id, projectPath, cwd, summary, customName }
+let selectedHistorySession = null; // { provider, id, projectPath, cwd, summary, customName }
 let pendingSessionOpts = null;
 let isConfirming = false;  // 防止重复点击
-let claudeLoadTimer = null; // 防抖定时器
+let projectHistoryLoadTimer = null; // 防抖定时器
 
 // 从 localStorage 加载最近使用的项目
 function loadRecentProjects() {
@@ -174,34 +202,152 @@ function addProjectToRecent(path) {
   saveRecentProjects(filtered);
 }
 
-function updateProviderUI() {
-  const isClaude = selectedProvider === 'claude';
-  if (!isClaude) {
-    selectedClaudeSession = null;
-    if (claudeLoadTimer) {
-      clearTimeout(claudeLoadTimer);
-      claudeLoadTimer = null;
+function getProviderLabel(provider) {
+  return provider === 'claude' ? 'Claude' : 'Codex';
+}
+
+function getProviderBadgeClass(provider) {
+  return provider === 'claude' ? 'claude' : 'codex';
+}
+
+function getHistoryResumeCommand(session) {
+  return session.provider === 'claude'
+    ? `claude --resume ${session.id}`
+    : `codex resume ${session.id}`;
+}
+
+function sortConversationSessions() {
+  conversationSessionsCache.sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    return b.lastActive.localeCompare(a.lastActive);
+  });
+}
+
+function findConversationSession(provider, sessionId) {
+  return conversationSessionsCache.find(s => s.provider === provider && s.id === sessionId);
+}
+
+async function renameHistorySession(session, newName) {
+  if (session.provider === 'claude') {
+    await window.termAPI.renameClaudeSession({
+      projectPath: session.projectPath,
+      sessionId: session.id,
+      name: newName,
+    });
+  } else {
+    await window.termAPI.renameCodexSession({
+      sessionId: session.id,
+      name: newName,
+    });
+  }
+
+  session.customName = newName || null;
+  const cached = findConversationSession(session.provider, session.id);
+  if (cached) cached.customName = session.customName;
+}
+
+async function pinHistorySession(session, pinned) {
+  if (session.provider === 'claude') {
+    await window.termAPI.pinClaudeSession({
+      projectPath: session.projectPath,
+      sessionId: session.id,
+      pinned,
+    });
+  } else {
+    await window.termAPI.pinCodexSession({
+      sessionId: session.id,
+      pinned,
+    });
+  }
+
+  session.pinned = pinned;
+  const cached = findConversationSession(session.provider, session.id);
+  if (cached) cached.pinned = pinned;
+  sortConversationSessions();
+}
+
+async function deleteHistorySession(session) {
+  if (session.provider === 'claude') {
+    await window.termAPI.deleteClaudeSession({
+      projectPath: session.projectPath,
+      sessionId: session.id,
+    });
+  } else {
+    await window.termAPI.deleteCodexSession({
+      sessionId: session.id,
+    });
+  }
+
+  conversationSessionsCache = conversationSessionsCache.filter(s => !(s.provider === session.provider && s.id === session.id));
+}
+
+async function resumeHistorySession(historySession, fallbackPath) {
+  if (!historySession) return null;
+
+  if (historySession.provider === 'claude') {
+    const claudeName = historySession.customName || (historySession.summary ? historySession.summary.slice(0, 50) : null);
+    const sessionId = await createSession(null, {
+      ...pendingSessionOpts,
+      cwd: historySession.cwd || fallbackPath,
+      historyProvider: 'claude',
+      claudeSessionId: historySession.id,
+      claudeProjectPath: historySession.projectPath,
+      claudeName,
+      historyName: claudeName,
+    });
+    if (sessionId) {
+      setTimeout(() => {
+        window.termAPI.write({ id: sessionId, data: `${getHistoryResumeCommand(historySession)}\r` });
+      }, 500);
     }
-    projectClaudeSection.style.display = 'none';
-    projectClaudeList.innerHTML = '';
-    return;
+    return sessionId;
+  }
+
+  const historyName = historySession.customName || historySession.summary || null;
+  const sessionId = await createSession(null, {
+    ...pendingSessionOpts,
+    cwd: historySession.cwd || fallbackPath,
+    historyProvider: 'codex',
+    codexSessionId: historySession.id,
+    codexThreadName: historyName,
+    historyName,
+  });
+  if (sessionId) {
+    setTimeout(() => {
+      window.termAPI.write({ id: sessionId, data: `${getHistoryResumeCommand(historySession)}\r` });
+    }, 500);
+  }
+  return sessionId;
+}
+
+function updateProviderUI() {
+  selectedHistorySession = null;
+  if (projectHistoryLoadTimer) {
+    clearTimeout(projectHistoryLoadTimer);
+    projectHistoryLoadTimer = null;
   }
 
   const path = selectedProjectPath || projectPathInput.value.trim();
   if (!path) {
     projectClaudeSection.style.display = 'none';
     projectClaudeList.innerHTML = '';
+    if (projectHistoryLabel) {
+      projectHistoryLabel.textContent = '该项目的历史会话（可选）：';
+    }
     return;
   }
 
-  scheduleLoadClaudeSessions(path);
+  if (projectHistoryLabel) {
+    projectHistoryLabel.textContent = `该项目的 ${getProviderLabel(selectedProvider)} 历史会话（可选）：`;
+  }
+  scheduleLoadProjectHistory(path);
 }
 
 function showProjectDialog(sessionOpts = {}) {
   pendingSessionOpts = sessionOpts;
   selectedProjectPath = null;
   selectedProvider = 'codex';
-  selectedClaudeSession = null;
+  selectedHistorySession = null;
   projectPathInput.value = '';
   projectDialogConfirm.disabled = true;
   providerInputs.forEach(input => {
@@ -209,6 +355,9 @@ function showProjectDialog(sessionOpts = {}) {
   });
   projectClaudeSection.style.display = 'none';
   projectClaudeList.innerHTML = '';
+  if (projectHistoryLabel) {
+    projectHistoryLabel.textContent = '该项目的历史会话（可选）：';
+  }
 
   renderRecentProjects();
 
@@ -220,8 +369,8 @@ function hideProjectDialog() {
   projectDialog.classList.add('hidden');
   pendingSessionOpts = null;
   selectedProjectPath = null;
-  selectedClaudeSession = null;
-  if (claudeLoadTimer) { clearTimeout(claudeLoadTimer); claudeLoadTimer = null; }
+  selectedHistorySession = null;
+  if (projectHistoryLoadTimer) { clearTimeout(projectHistoryLoadTimer); projectHistoryLoadTimer = null; }
 }
 
 function renderRecentProjects() {
@@ -251,36 +400,43 @@ function renderRecentProjects() {
 
       recentProjectsList.querySelectorAll('.project-item').forEach(el => el.classList.remove('selected'));
       item.classList.add('selected');
-      if (selectedProvider === 'claude') scheduleLoadClaudeSessions(project.path);
+      updateProviderUI();
     });
 
     recentProjectsList.appendChild(item);
   });
 }
 
-// 防抖加载 Claude 历史会话
-function scheduleLoadClaudeSessions(folderPath) {
-  if (claudeLoadTimer) clearTimeout(claudeLoadTimer);
-  claudeLoadTimer = setTimeout(() => loadClaudeSessionsForPath(folderPath), 300);
+// 防抖加载项目历史会话
+function scheduleLoadProjectHistory(folderPath) {
+  if (projectHistoryLoadTimer) clearTimeout(projectHistoryLoadTimer);
+  projectHistoryLoadTimer = setTimeout(() => loadHistorySessionsForPath(folderPath), 300);
 }
 
-async function loadClaudeSessionsForPath(folderPath) {
-  selectedClaudeSession = null;
+async function loadHistorySessionsForPath(folderPath) {
+  const requestedProvider = selectedProvider;
+  const requestedPath = folderPath;
+  selectedHistorySession = null;
   projectClaudeSection.style.display = 'block';
   projectClaudeList.innerHTML = '<div class="project-claude-loading">加载中...</div>';
 
   let sessions = [];
   try {
-    sessions = await window.termAPI.listClaudeSessions({ rootPath: folderPath });
+    sessions = await window.termAPI.listConversationSessions({ rootPath: requestedPath, provider: requestedProvider });
   } catch {
+    const activePath = selectedProjectPath || projectPathInput.value.trim();
+    if (projectDialog.classList.contains('hidden') || activePath !== requestedPath || selectedProvider !== requestedProvider) return;
     projectClaudeList.innerHTML = '<div class="project-claude-empty">加载失败</div>';
     return;
   }
 
+  const activePath = selectedProjectPath || projectPathInput.value.trim();
+  if (projectDialog.classList.contains('hidden') || activePath !== requestedPath || selectedProvider !== requestedProvider) return;
+
   projectClaudeList.innerHTML = '';
 
   if (sessions.length === 0) {
-    projectClaudeList.innerHTML = '<div class="project-claude-empty">该项目暂无 Claude 历史会话</div>';
+    projectClaudeList.innerHTML = `<div class="project-claude-empty">该项目暂无 ${getProviderLabel(selectedProvider)} 历史会话</div>`;
     return;
   }
 
@@ -289,8 +445,9 @@ async function loadClaudeSessionsForPath(folderPath) {
     item.className = 'project-claude-item';
     const displayName = s.customName || (s.summary ? s.summary.slice(0, 60) : '(空会话)');
     const timeStr = s.lastActive ? formatTime(s.lastActive) : '';
+    const providerLabel = getProviderLabel(s.provider);
     item.innerHTML = `
-      <span class="project-claude-item-icon">🤖</span>
+      <span class="project-claude-item-icon ${getProviderBadgeClass(s.provider)}">${providerLabel}</span>
       <div class="project-claude-item-info">
         <div class="project-claude-item-name" title="${displayName}">${displayName}</div>
         <div class="project-claude-item-meta">${timeStr}</div>
@@ -298,12 +455,12 @@ async function loadClaudeSessionsForPath(folderPath) {
       <span class="project-claude-item-check">✓</span>
     `;
     item.addEventListener('click', () => {
-      if (selectedClaudeSession === s) {
+      if (selectedHistorySession === s) {
         // 再次点击取消选择
-        selectedClaudeSession = null;
+        selectedHistorySession = null;
         item.classList.remove('selected');
       } else {
-        selectedClaudeSession = s;
+        selectedHistorySession = s;
         projectClaudeList.querySelectorAll('.project-claude-item').forEach(el => el.classList.remove('selected'));
         item.classList.add('selected');
       }
@@ -339,23 +496,11 @@ async function confirmProjectSelection() {
 
     addProjectToRecent(path);
 
-    const cs = selectedClaudeSession;
-    if (selectedProvider === 'claude' && cs) {
-      // 选择了历史会话：直接 resume
-      const claudeName = cs.customName || (cs.summary ? cs.summary.slice(0, 50) : null);
-      const sessionId = await createSession(null, {
-        ...pendingSessionOpts,
-        cwd: cs.cwd || path,
-        claudeSessionId: cs.id,
-        claudeProjectPath: cs.projectPath,
-        claudeName,
-      });
+    const historySession = selectedHistorySession;
+    if (historySession) {
+      const sessionId = await resumeHistorySession(historySession, path);
       hideProjectDialog();
-      if (sessionId) {
-        setTimeout(() => {
-          window.termAPI.write({ id: sessionId, data: `claude --resume ${cs.id}\r` });
-        }, 500);
-      }
+      if (!sessionId) return;
     } else {
       // 未选历史会话：按供应商新建会话
       const sessionId = await createSession(null, {
@@ -385,11 +530,7 @@ btnBrowseFolder.addEventListener('click', async () => {
     selectedProjectPath = folderPath;
     projectDialogConfirm.disabled = false;
     recentProjectsList.querySelectorAll('.project-item').forEach(el => el.classList.remove('selected'));
-    if (selectedProvider === 'claude') {
-      scheduleLoadClaudeSessions(folderPath);
-    } else {
-      updateProviderUI();
-    }
+    updateProviderUI();
   }
 });
 
@@ -399,12 +540,12 @@ projectPathInput.addEventListener('input', () => {
   selectedProjectPath = path;
   projectDialogConfirm.disabled = !path;
   recentProjectsList.querySelectorAll('.project-item').forEach(el => el.classList.remove('selected'));
-  if (path && selectedProvider === 'claude') {
-    scheduleLoadClaudeSessions(path);
+  if (path) {
+    updateProviderUI();
   } else {
     projectClaudeSection.style.display = 'none';
     projectClaudeList.innerHTML = '';
-    selectedClaudeSession = null;
+    selectedHistorySession = null;
   }
 });
 
@@ -425,6 +566,367 @@ document.addEventListener('keydown', (e) => {
     hideProjectDialog();
   }
 });
+
+function clampFontSize(value) {
+  const next = Number(value);
+  if (!Number.isFinite(next)) return globalFontSize;
+  return Math.min(Math.max(Math.round(next), MIN_FONT_SIZE), MAX_FONT_SIZE);
+}
+
+function getTerminalFontPreset(fontFamily) {
+  return TERMINAL_FONT_PRESETS.find(option => option.value === fontFamily) || null;
+}
+
+function getTerminalFontTuning(fontFamily) {
+  if (/microsoft yahei/i.test(fontFamily || '')) {
+    return { letterSpacing: -1, lineHeight: 1 };
+  }
+  return { letterSpacing: 0, lineHeight: 1 };
+}
+
+function buildLayoutSnapshot() {
+  const tabsLayout = [];
+  for (const [, tab] of tabs) {
+    const panes = [];
+    for (const sid of tab.sessions) {
+      const s = allSessions.get(sid);
+      if (!s) continue;
+      panes.push({
+        name: s.name,
+        cwd: s.cwd || null,
+        historyProvider: s.historyProvider || null,
+        claudeSessionId: s.claudeSessionId || null,
+        claudeProjectPath: s.claudeProjectPath || null,
+        codexSessionId: s.codexSessionId || null,
+        codexThreadName: s.codexThreadName || null,
+      });
+    }
+    if (panes.length === 0) continue;
+    tabsLayout.push({ name: tab.name, panes });
+  }
+  return {
+    tabs: tabsLayout,
+    theme: currentTheme,
+    terminalFontFamily: globalFontFamily,
+    terminalFontSize: globalFontSize,
+  };
+}
+
+function persistLayout() {
+  try {
+    void window.termAPI.saveLayout(buildLayoutSnapshot());
+  } catch {
+    // ignore persistence errors in renderer
+  }
+}
+
+let persistLayoutTimer = null;
+
+function scheduleLayoutPersist() {
+  clearTimeout(persistLayoutTimer);
+  persistLayoutTimer = setTimeout(() => {
+    persistLayoutTimer = null;
+    persistLayout();
+  }, 150);
+}
+
+function syncSettingsControls() {
+  if (!settingsDropdown || settingsDropdown.classList.contains('hidden')) return;
+  const themeSelect = settingsDropdown.querySelector('[data-setting="theme"]');
+  const fontSelect = settingsDropdown.querySelector('[data-setting="font-family"]');
+  const sizeSelect = settingsDropdown.querySelector('[data-setting="font-size"]');
+  const fontHint = settingsDropdown.querySelector('.settings-font-hint');
+  const preview = settingsDropdown.querySelector('.settings-preview');
+  const fontPreset = getTerminalFontPreset(globalFontFamily);
+  const tuning = getTerminalFontTuning(globalFontFamily);
+  if (themeSelect) themeSelect.value = currentTheme;
+  if (fontSelect) fontSelect.value = globalFontFamily;
+  if (sizeSelect) sizeSelect.value = String(globalFontSize);
+  if (fontHint) {
+    fontHint.textContent = fontPreset
+      ? fontPreset.description
+      : '保留中文回退支持。按住 Ctrl 滚轮也可以快速调整字号。';
+  }
+  if (preview) {
+    preview.style.fontFamily = globalFontFamily;
+    preview.style.fontSize = `${Math.min(globalFontSize, 16)}px`;
+    preview.style.letterSpacing = `${tuning.letterSpacing}px`;
+    preview.style.lineHeight = String(tuning.lineHeight);
+  }
+}
+
+function applyTheme(themeName, { persist = true } = {}) {
+  if (!THEMES[themeName]) return;
+  currentTheme = themeName;
+  document.documentElement.dataset.theme = currentTheme === 'light' ? 'light' : '';
+  for (const [, session] of allSessions) {
+    session.term.options.theme = THEMES[currentTheme];
+  }
+  syncSettingsControls();
+  if (persist) scheduleLayoutPersist();
+}
+
+function applyTerminalAppearance({ fontFamily = globalFontFamily, fontSize = globalFontSize, persist = true } = {}) {
+  globalFontFamily = fontFamily || DEFAULT_TERMINAL_FONT_FAMILY;
+  globalFontSize = clampFontSize(fontSize);
+  const tuning = getTerminalFontTuning(globalFontFamily);
+  document.documentElement.style.setProperty('--terminal-font-family', globalFontFamily);
+  document.documentElement.style.setProperty('--terminal-font-size', `${globalFontSize}px`);
+  for (const [, session] of allSessions) {
+    session.term.options.fontFamily = globalFontFamily;
+    session.term.options.fontSize = globalFontSize;
+    session.term.options.letterSpacing = tuning.letterSpacing;
+    session.term.options.lineHeight = tuning.lineHeight;
+  }
+  syncSettingsControls();
+  if (allSessions.size > 0) fitAllSessions();
+  if (persist) scheduleLayoutPersist();
+}
+
+function renderSettingsDropdown() {
+  settingsDropdown.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'settings-header';
+  header.innerHTML = '<span>常用设置</span>';
+  settingsDropdown.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'settings-body';
+
+  const terminalSection = document.createElement('div');
+  terminalSection.className = 'settings-section';
+
+  const terminalTitle = document.createElement('div');
+  terminalTitle.className = 'settings-section-title';
+  terminalTitle.textContent = '终端外观';
+  terminalSection.appendChild(terminalTitle);
+
+  const themeField = document.createElement('div');
+  themeField.className = 'settings-field';
+  const themeLabel = document.createElement('label');
+  themeLabel.textContent = '主题';
+  const themeSelect = document.createElement('select');
+  themeSelect.dataset.setting = 'theme';
+  themeSelect.innerHTML = `
+    <option value="dark">深色</option>
+    <option value="light">浅色</option>
+  `;
+  themeSelect.value = currentTheme;
+  themeSelect.addEventListener('change', () => applyTheme(themeSelect.value));
+  themeField.appendChild(themeLabel);
+  themeField.appendChild(themeSelect);
+  terminalSection.appendChild(themeField);
+
+  const fontField = document.createElement('div');
+  fontField.className = 'settings-field';
+  const fontLabel = document.createElement('label');
+  fontLabel.textContent = '字体';
+  const fontSelect = document.createElement('select');
+  fontSelect.dataset.setting = 'font-family';
+  for (const option of TERMINAL_FONT_PRESETS) {
+    const el = document.createElement('option');
+    el.value = option.value;
+    el.textContent = option.label;
+    fontSelect.appendChild(el);
+  }
+  fontSelect.value = globalFontFamily;
+  fontSelect.addEventListener('change', () => {
+    applyTerminalAppearance({ fontFamily: fontSelect.value });
+  });
+  fontField.appendChild(fontLabel);
+  fontField.appendChild(fontSelect);
+  const fontHint = document.createElement('div');
+  fontHint.className = 'settings-hint settings-font-hint';
+  fontHint.textContent = getTerminalFontPreset(globalFontFamily)?.description || '保留中文回退支持。按住 Ctrl 滚轮也可以快速调整字号。';
+  fontField.appendChild(fontHint);
+  terminalSection.appendChild(fontField);
+
+  const fontSizeField = document.createElement('div');
+  fontSizeField.className = 'settings-field';
+  const fontSizeLabel = document.createElement('label');
+  fontSizeLabel.textContent = '字号';
+  const fontSizeSelect = document.createElement('select');
+  fontSizeSelect.dataset.setting = 'font-size';
+  for (let size = MIN_FONT_SIZE; size <= MAX_FONT_SIZE; size++) {
+    const el = document.createElement('option');
+    el.value = String(size);
+    el.textContent = `${size}px`;
+    fontSizeSelect.appendChild(el);
+  }
+  fontSizeSelect.value = String(globalFontSize);
+  fontSizeSelect.addEventListener('change', () => {
+    applyTerminalAppearance({ fontSize: parseInt(fontSizeSelect.value, 10) });
+  });
+  fontSizeField.appendChild(fontSizeLabel);
+  fontSizeField.appendChild(fontSizeSelect);
+  terminalSection.appendChild(fontSizeField);
+
+  const hint = document.createElement('div');
+  hint.className = 'settings-hint';
+  hint.textContent = '按住 Ctrl 滚轮也可以快速调整字号。';
+  terminalSection.appendChild(hint);
+
+  const preview = document.createElement('div');
+  preview.className = 'settings-preview';
+  preview.textContent = '终端字体预览: const path = "D:\\workspace\\split-terminal\\README.md";';
+  terminalSection.appendChild(preview);
+
+  body.appendChild(terminalSection);
+
+  const updateSection = document.createElement('div');
+  updateSection.className = 'settings-section';
+  const updateTitle = document.createElement('div');
+  updateTitle.className = 'settings-section-title';
+  updateTitle.textContent = '版本更新';
+  updateSection.appendChild(updateTitle);
+
+  const updateHint = document.createElement('div');
+  updateHint.className = 'settings-hint';
+  updateHint.textContent = '在这里直接检查更新，或打开版本说明查看变更记录。';
+  updateSection.appendChild(updateHint);
+
+  const updateActions = document.createElement('div');
+  updateActions.className = 'settings-actions';
+
+  const checkUpdateBtn = document.createElement('button');
+  checkUpdateBtn.textContent = '检查更新';
+  checkUpdateBtn.addEventListener('click', () => {
+    window.termAPI.updaterCheckForUpdates();
+  });
+  updateActions.appendChild(checkUpdateBtn);
+
+  const changelogBtn = document.createElement('button');
+  changelogBtn.textContent = '版本说明';
+  changelogBtn.addEventListener('click', () => {
+    if (typeof showUpdaterChangelog === 'function') {
+      showUpdaterChangelog();
+    }
+  });
+  updateActions.appendChild(changelogBtn);
+
+  updateSection.appendChild(updateActions);
+  body.appendChild(updateSection);
+
+  settingsDropdown.appendChild(body);
+}
+
+function toggleSettingsDropdown() {
+  if (settingsDropdown.classList.contains('hidden')) {
+    renderSettingsDropdown();
+    settingsDropdown.classList.remove('hidden');
+  } else {
+    settingsDropdown.classList.add('hidden');
+  }
+}
+
+function hasTransferType(dataTransfer, type) {
+  if (!dataTransfer?.types) return false;
+  return Array.from(dataTransfer.types).includes(type);
+}
+
+function isExternalFileTransfer(dataTransfer) {
+  if (!dataTransfer) return false;
+  if (hasTransferType(dataTransfer, 'Files')) return true;
+  if (Array.from(dataTransfer.items || []).some(item => item.kind === 'file')) return true;
+  if ((dataTransfer.files?.length || 0) > 0) return true;
+  return false;
+}
+
+function looksLikeAbsolutePath(pathText) {
+  return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(pathText);
+}
+
+function fileUriToPath(uri) {
+  try {
+    const parsed = new URL(uri);
+    if (parsed.protocol !== 'file:') return '';
+    let pathname = decodeURIComponent(parsed.pathname || '');
+    if (/^\/[A-Za-z]:/.test(pathname)) pathname = pathname.slice(1);
+    return pathname.replace(/\//g, '\\');
+  } catch {
+    return '';
+  }
+}
+
+function extractPathsFromText(text) {
+  if (!text) return [];
+  return text
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line.startsWith('file://') ? fileUriToPath(line) : line)
+    .filter(looksLikeAbsolutePath);
+}
+
+function extractNativePathsFromFiles(files) {
+  const list = Array.from(files || []).filter(Boolean);
+  if (list.length === 0 || typeof window.termAPI.resolveNativeFilePaths !== 'function') return [];
+  try {
+    return window.termAPI.resolveNativeFilePaths(list).filter(looksLikeAbsolutePath);
+  } catch {
+    return [];
+  }
+}
+
+function extractPathsFromDataTransfer(dataTransfer) {
+  const results = [];
+  const seen = new Set();
+  const push = (candidate) => {
+    const next = (candidate || '').trim();
+    if (!next || !looksLikeAbsolutePath(next) || seen.has(next)) return;
+    seen.add(next);
+    results.push(next);
+  };
+
+  for (const nativePath of extractNativePathsFromFiles(dataTransfer?.files)) {
+    push(nativePath);
+  }
+  for (const file of Array.from(dataTransfer?.files || [])) {
+    push(file.path || file.name);
+  }
+
+  const itemFiles = [];
+  for (const item of Array.from(dataTransfer?.items || [])) {
+    if (item.kind !== 'file') continue;
+    const file = item.getAsFile();
+    if (file) itemFiles.push(file);
+    push(file?.path || file?.name);
+  }
+  for (const nativePath of extractNativePathsFromFiles(itemFiles)) {
+    push(nativePath);
+  }
+
+  for (const pathText of extractPathsFromText(dataTransfer?.getData('text/uri-list'))) {
+    push(pathText);
+  }
+  if (results.length === 0) {
+    for (const pathText of extractPathsFromText(dataTransfer?.getData('text/plain'))) {
+      push(pathText);
+    }
+  }
+  return results;
+}
+
+function formatDroppedPathForInput(pathText) {
+  return /\s/.test(pathText) ? `"${pathText}"` : pathText;
+}
+
+function writeDroppedPathsToSession(sessionId, dataTransfer) {
+  const droppedPaths = extractPathsFromDataTransfer(dataTransfer);
+  if (droppedPaths.length === 0) return false;
+  const payload = droppedPaths.map(formatDroppedPathForInput).join(' ');
+  window.termAPI.write({ id: sessionId, data: payload });
+  return true;
+}
+
+function getFocusedWritableSessionId() {
+  const tab = tabs.get(activeTabId);
+  if (!tab?.focusedSession) return null;
+  const session = allSessions.get(tab.focusedSession);
+  if (!session || session.isHistory) return null;
+  return tab.focusedSession;
+}
 
 // ============ 标签页管理 ============
 function createTab(name) {
@@ -499,7 +1001,7 @@ function renderTabs() {
     el.addEventListener('dragover', (e) => {
       e.preventDefault();
       // 面板拖入标签页 或 标签页排序
-      if (e.dataTransfer.types.includes('text/x-pane-id')) {
+      if (hasTransferType(e.dataTransfer, 'text/x-pane-id')) {
         e.dataTransfer.dropEffect = 'move';
         el.classList.add('tab-drag-over');
       } else if (dragSrcId && dragSrcId !== id) {
@@ -594,7 +1096,9 @@ async function createSession(tabId, opts = {}) {
   // 创建 xterm 实例
   const term = new Terminal({
     fontSize: globalFontSize,
-    fontFamily: "'Cascadia Code', 'Consolas', monospace",
+    fontFamily: globalFontFamily,
+    letterSpacing: getTerminalFontTuning(globalFontFamily).letterSpacing,
+    lineHeight: getTerminalFontTuning(globalFontFamily).lineHeight,
     theme: THEMES[currentTheme],
     cursorBlink: true,
     allowProposedApi: true,
@@ -605,8 +1109,8 @@ async function createSession(tabId, opts = {}) {
     if (e.type !== 'keydown') return true;
     // 跳过 IME 输入法组合状态，避免干扰中文输入
     if (e.isComposing || e.keyCode === 229) return true;
-    // Shift+Enter → 换行（模拟 Alt+Enter：ESC + CR）
-    if (e.shiftKey && e.key === 'Enter') {
+    // Shift+Enter / Ctrl+Enter → 换行（模拟 Alt+Enter：ESC + CR）
+    if ((e.shiftKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
       e.stopPropagation();
       window.termAPI.write({ id: sessionId, data: '\x1b\r' });
@@ -664,7 +1168,7 @@ async function createSession(tabId, opts = {}) {
     document.querySelectorAll('.terminal-pane').forEach(p => p.classList.remove('pane-drag-over'));
   });
   pane.addEventListener('dragover', (e) => {
-    const srcId = e.dataTransfer.types.includes('text/x-pane-id');
+    const srcId = hasTransferType(e.dataTransfer, 'text/x-pane-id');
     if (!srcId) return; // 不是面板拖拽，交给文件拖拽处理
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -699,7 +1203,7 @@ async function createSession(tabId, opts = {}) {
   pane.appendChild(header);
   pane.appendChild(wrapper);
 
-  const displayName = opts.claudeName || name;
+  const displayName = opts.historyName || opts.claudeName || opts.codexThreadName || name;
   const session = { 
     tabId, 
     term, 
@@ -709,8 +1213,11 @@ async function createSession(tabId, opts = {}) {
     ptyId: sessionId, 
     outputBuffer: '', 
     createdAt: new Date().toISOString(), 
+    historyProvider: opts.historyProvider || (opts.claudeSessionId ? 'claude' : (opts.codexSessionId ? 'codex' : null)),
     claudeSessionId: opts.claudeSessionId || null, 
     claudeProjectPath: opts.claudeProjectPath || null,
+    codexSessionId: opts.codexSessionId || null,
+    codexThreadName: opts.codexThreadName || null,
     cwd: opts.cwd || null  // 会话的工作目录
   };
   if (displayName !== name) {
@@ -828,8 +1335,9 @@ async function createSession(tabId, opts = {}) {
       const resumeMatch = trimmed.match(/claude\s+(?:--resume|-r)\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
       if (resumeMatch && !session.claudeSessionId) {
         const claudeId = resumeMatch[1];
-        const cached = claudeSessionsCache.find(s => s.id === claudeId);
+        const cached = conversationSessionsCache.find(s => s.provider === 'claude' && s.id === claudeId);
         session.claudeSessionId = claudeId;
+        session.historyProvider = 'claude';
         if (cached) {
           session.claudeProjectPath = cached.projectPath;
           const claudeName = cached.customName || (cached.summary ? cached.summary.slice(0, 50) : null);
@@ -840,7 +1348,26 @@ async function createSession(tabId, opts = {}) {
             updateInfo();
           }
         }
-      } else if (!session.claudeSessionId && /^claude(\s+|$)/.test(trimmed) && !/^claude\s+(auth|doctor|install|mcp|plugin|setup-token|update)\b/.test(trimmed)) {
+      } else {
+        const codexResumeMatch = trimmed.match(/codex\s+resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+        if (codexResumeMatch && !session.codexSessionId) {
+          const codexId = codexResumeMatch[1];
+          const cached = conversationSessionsCache.find(s => s.provider === 'codex' && s.id === codexId);
+          session.codexSessionId = codexId;
+          session.historyProvider = 'codex';
+          if (cached) {
+            const codexName = cached.customName || cached.summary || null;
+            session.codexThreadName = codexName;
+            if (codexName) {
+              session.name = codexName;
+              const titleEl = session.element.querySelector('.pane-title');
+              if (titleEl) titleEl.textContent = codexName;
+              updateInfo();
+            }
+          }
+        }
+      }
+      if (!session.claudeSessionId && /^claude(\s+|$)/.test(trimmed) && !/^claude\s+(auth|doctor|install|mcp|plugin|setup-token|update)\b/.test(trimmed)) {
         // 用户输入了 claude 命令，启动轮询
         session.startClaudeDetection(Date.now() - 2000);
       }
@@ -859,8 +1386,9 @@ async function createSession(tabId, opts = {}) {
 
   // 接收文件树拖拽（仅处理非面板拖拽）
   wrapper.addEventListener('dragover', (e) => {
-    if (e.dataTransfer.types.includes('text/x-pane-id')) return;
+    if (hasTransferType(e.dataTransfer, 'text/x-pane-id')) return;
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = 'copy';
     pane.classList.add('drag-over');
   });
@@ -868,13 +1396,11 @@ async function createSession(tabId, opts = {}) {
     pane.classList.remove('drag-over');
   });
   wrapper.addEventListener('drop', (e) => {
-    if (e.dataTransfer.types.includes('text/x-pane-id')) return;
+    if (hasTransferType(e.dataTransfer, 'text/x-pane-id')) return;
     e.preventDefault();
+    e.stopPropagation();
     pane.classList.remove('drag-over');
-    const droppedPath = e.dataTransfer.getData('text/plain');
-    if (droppedPath && !session.isHistory) {
-      const safePath = droppedPath.includes(' ') ? `"${droppedPath}"` : droppedPath;
-      window.termAPI.write({ id: sessionId, data: safePath });
+    if (!session.isHistory && writeDroppedPathsToSession(sessionId, e.dataTransfer)) {
       focusSession(sessionId);
     }
   });
@@ -1043,12 +1569,7 @@ function updateInfo() {
 
 // ============ 主题切换 ============
 function toggleTheme() {
-  currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = currentTheme === 'light' ? 'light' : '';
-  // 更新所有终端主题
-  for (const [, session] of allSessions) {
-    session.term.options.theme = THEMES[currentTheme];
-  }
+  applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
 }
 
 // ============ 会话重命名（内联编辑） ============
@@ -1079,7 +1600,16 @@ function startInlineRename(session, type) {
           sessionId: session.claudeSessionId,
           name: newName,
         }).then(() => {
-          const cached = claudeSessionsCache.find(s => s.id === session.claudeSessionId);
+          const cached = conversationSessionsCache.find(s => s.provider === 'claude' && s.id === session.claudeSessionId);
+          if (cached) cached.customName = newName;
+        }).catch(() => {});
+      } else if (session.codexSessionId) {
+        window.termAPI.renameCodexSession({
+          sessionId: session.codexSessionId,
+          name: newName,
+        }).then(() => {
+          session.codexThreadName = newName;
+          const cached = conversationSessionsCache.find(s => s.provider === 'codex' && s.id === session.codexSessionId);
           if (cached) cached.customName = newName;
         }).catch(() => {});
       }
@@ -1219,7 +1749,7 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         toggleSidebar();
         break;
-      case 'L': // Claude 会话
+      case 'L': // 对话历史
         e.preventDefault();
         toggleClaudeDropdown();
         break;
@@ -1254,7 +1784,10 @@ window.addEventListener('resize', () => {
 document.getElementById('btn-add').addEventListener('click', async () => {
   showProjectDialog();
 });
-document.getElementById('btn-theme').addEventListener('click', toggleTheme);
+document.getElementById('btn-settings').addEventListener('click', (e) => {
+  e.stopPropagation();
+  toggleSettingsDropdown();
+});
 document.getElementById('btn-new-tab').addEventListener('click', () => {
   const newTab = createTab();
   showProjectDialog();
@@ -2018,19 +2551,43 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// ============ Claude 会话管理 UI ============
+document.addEventListener('click', (e) => {
+  if (!settingsDropdown.classList.contains('hidden') && !e.target.closest('#settings-wrapper')) {
+    settingsDropdown.classList.add('hidden');
+  }
+});
+
+document.addEventListener('dragover', (e) => {
+  if (hasTransferType(e.dataTransfer, 'text/x-pane-id')) return;
+  if (!isExternalFileTransfer(e.dataTransfer)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+
+document.addEventListener('drop', (e) => {
+  if (hasTransferType(e.dataTransfer, 'text/x-pane-id')) return;
+  if (!isExternalFileTransfer(e.dataTransfer)) return;
+  e.preventDefault();
+  const sessionId = getFocusedWritableSessionId();
+  if (!sessionId) return;
+  if (writeDroppedPathsToSession(sessionId, e.dataTransfer)) {
+    focusSession(sessionId);
+  }
+});
+
+// ============ 对话历史 UI ============
 const claudeDropdown = document.getElementById('claude-dropdown');
-let claudeSessionsCache = [];
+let conversationSessionsCache = [];
 
 function toggleClaudeDropdown() {
   if (claudeDropdown.classList.contains('hidden')) {
-    showClaudeDropdown();
+    showConversationDropdown();
   } else {
     claudeDropdown.classList.add('hidden');
   }
 }
 
-async function showClaudeDropdown() {
+async function showConversationDropdown() {
   claudeDropdown.innerHTML = '';
 
   if (!currentRootPath) {
@@ -2039,18 +2596,14 @@ async function showClaudeDropdown() {
     return;
   }
 
-  claudeSessionsCache = await window.termAPI.listClaudeSessions({ rootPath: currentRootPath });
-  // 置顶优先，置顶内部 + 非置顶均按时间倒序
-  claudeSessionsCache.sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    return b.lastActive.localeCompare(a.lastActive);
-  });
+  conversationSessionsCache = await window.termAPI.listConversationSessions({ rootPath: currentRootPath });
+  sortConversationSessions();
   claudeDropdown.innerHTML = '';
 
   // 头部
   const header = document.createElement('div');
   header.className = 'claude-header';
-  header.innerHTML = `<span>Claude 会话 (${claudeSessionsCache.length})</span>`;
+  header.innerHTML = `<span>对话历史 (${conversationSessionsCache.length})</span>`;
   claudeDropdown.appendChild(header);
 
   // 搜索框
@@ -2058,7 +2611,7 @@ async function showClaudeDropdown() {
   searchInput.className = 'claude-search-input';
   searchInput.placeholder = '搜索会话...';
   searchInput.addEventListener('input', () => {
-    renderClaudeList(listEl, searchInput.value.trim().toLowerCase());
+    renderConversationList(listEl, searchInput.value.trim().toLowerCase());
   });
   searchInput.addEventListener('keydown', (e) => e.stopPropagation());
   claudeDropdown.appendChild(searchInput);
@@ -2068,26 +2621,27 @@ async function showClaudeDropdown() {
   listEl.className = 'claude-list';
   claudeDropdown.appendChild(listEl);
 
-  renderClaudeList(listEl, '');
+  renderConversationList(listEl, '');
   claudeDropdown.classList.remove('hidden');
 
   // 聚焦搜索框
   requestAnimationFrame(() => searchInput.focus());
 }
 
-function renderClaudeList(listEl, filter) {
+function renderConversationList(listEl, filter) {
   listEl.innerHTML = '';
 
   const filtered = filter
-    ? claudeSessionsCache.filter(s =>
+    ? conversationSessionsCache.filter(s =>
         (s.customName && s.customName.toLowerCase().includes(filter)) ||
         s.summary.toLowerCase().includes(filter) ||
         s.projectName.toLowerCase().includes(filter) ||
-        s.id.toLowerCase().includes(filter))
-    : claudeSessionsCache;
+        s.id.toLowerCase().includes(filter) ||
+        getProviderLabel(s.provider).toLowerCase().includes(filter))
+    : conversationSessionsCache;
 
   if (filtered.length === 0) {
-    listEl.innerHTML = `<div class="claude-empty">${filter ? '无匹配结果' : '未找到 Claude 会话'}</div>`;
+    listEl.innerHTML = `<div class="claude-empty">${filter ? '无匹配结果' : '未找到历史会话'}</div>`;
     return;
   }
 
@@ -2109,12 +2663,20 @@ function renderClaudeList(listEl, filter) {
     }
     nameEl.title = session.summary || '';
 
+    const providerMeta = document.createElement('div');
+    providerMeta.className = 'history-provider-row';
+    const providerTag = document.createElement('span');
+    providerTag.className = `history-provider-tag ${getProviderBadgeClass(session.provider)}`;
+    providerTag.textContent = getProviderLabel(session.provider);
+    providerMeta.appendChild(providerTag);
+
     // 项目 + 时间
     const meta = document.createElement('div');
     meta.className = 'claude-session-meta';
     meta.textContent = `${session.projectName} | ${formatTime(session.lastActive)}`;
     meta.title = session.projectName;
 
+    info.appendChild(providerMeta);
     info.appendChild(nameEl);
     info.appendChild(meta);
 
@@ -2122,68 +2684,53 @@ function renderClaudeList(listEl, filter) {
     const actions = document.createElement('div');
     actions.className = 'claude-session-actions';
 
-    // 置顶按钮
+    const copyIdBtn = document.createElement('button');
+    copyIdBtn.textContent = '⎘';
+    copyIdBtn.title = `复制 ${getHistoryResumeCommand(session)}`;
+    copyIdBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(getHistoryResumeCommand(session)).then(() => {
+        copyIdBtn.textContent = '✓';
+        setTimeout(() => { copyIdBtn.textContent = '⎘'; }, 1500);
+      });
+    });
+    actions.appendChild(copyIdBtn);
+
     const pinBtn = document.createElement('button');
     pinBtn.className = 'claude-pin-btn' + (session.pinned ? ' pinned' : '');
     pinBtn.textContent = session.pinned ? '★' : '☆';
-    pinBtn.title = session.pinned ? '取消置顶' : '置顶';
+    pinBtn.title = session.pinned ? '取消收藏' : '收藏';
     pinBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const newPinned = !session.pinned;
-      await window.termAPI.pinClaudeSession({
-        projectPath: session.projectPath,
-        sessionId: session.id,
-        pinned: newPinned,
-      });
-      session.pinned = newPinned;
-      // 重新排序并渲染
-      claudeSessionsCache.sort((a, b) => {
-        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-        return b.lastActive.localeCompare(a.lastActive);
-      });
+      await pinHistorySession(session, newPinned);
       const searchInput = claudeDropdown.querySelector('.claude-search-input');
-      const filter = searchInput ? searchInput.value.trim().toLowerCase() : '';
-      renderClaudeList(listEl, filter);
+      const filterValue = searchInput ? searchInput.value.trim().toLowerCase() : '';
+      renderConversationList(listEl, filterValue);
     });
 
-    // 重命名按钮
     const renameBtn = document.createElement('button');
     renameBtn.textContent = '✎';
     renameBtn.title = '重命名';
     renameBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      startClaudeSessionRename(session, nameEl);
+      startHistorySessionRename(session, nameEl);
     });
 
-    // 复制 ID 按钮
-    const copyIdBtn = document.createElement('button');
-    copyIdBtn.textContent = '⎘';
-    copyIdBtn.title = '复制 claude -r 命令';
-    copyIdBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      navigator.clipboard.writeText(`claude -r ${session.id}`).then(() => {
-        copyIdBtn.textContent = '✓';
-        setTimeout(() => { copyIdBtn.textContent = '⎘'; }, 1500);
-      });
-    });
-
-    // 删除按钮
     const deleteBtn = document.createElement('button');
     deleteBtn.textContent = '✕';
     deleteBtn.title = '删除会话';
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!confirm('确定删除此会话？')) return;
-      await window.termAPI.deleteClaudeSession({ projectPath: session.projectPath, sessionId: session.id });
-      claudeSessionsCache = claudeSessionsCache.filter(s => s.id !== session.id);
+      await deleteHistorySession(session);
       const searchInput = claudeDropdown.querySelector('.claude-search-input');
-      const filter = searchInput ? searchInput.value.trim().toLowerCase() : '';
-      renderClaudeList(listEl, filter);
+      const filterValue = searchInput ? searchInput.value.trim().toLowerCase() : '';
+      renderConversationList(listEl, filterValue);
     });
 
-    actions.appendChild(pinBtn);
+    actions.prepend(pinBtn);
     actions.appendChild(renameBtn);
-    actions.appendChild(copyIdBtn);
     actions.appendChild(deleteBtn);
 
     row.appendChild(info);
@@ -2192,24 +2739,14 @@ function renderClaudeList(listEl, filter) {
     // 点击整行 → 创建新终端并执行 resume（cwd 设为会话原始目录）
     row.addEventListener('click', async () => {
       claudeDropdown.classList.add('hidden');
-      const claudeName = session.customName || (session.summary ? session.summary.slice(0, 50) : null);
-      const newSessionId = await createSession(null, {
-        cwd: session.cwd || undefined,
-        claudeSessionId: session.id,
-        claudeProjectPath: session.projectPath,
-        claudeName,
-      });
-      if (!newSessionId) return;
-      setTimeout(() => {
-        window.termAPI.write({ id: newSessionId, data: `claude --resume ${session.id}\r` });
-      }, 300);
+      await resumeHistorySession(session, session.cwd || currentRootPath);
     });
 
     listEl.appendChild(row);
   }
 }
 
-function startClaudeSessionRename(session, nameEl) {
+function startHistorySessionRename(session, nameEl) {
   if (nameEl.querySelector('.claude-inline-rename')) return;
 
   const currentName = session.customName || '';
@@ -2220,12 +2757,7 @@ function startClaudeSessionRename(session, nameEl) {
 
   const commit = async () => {
     const newName = input.value.trim();
-    await window.termAPI.renameClaudeSession({
-      projectPath: session.projectPath,
-      sessionId: session.id,
-      name: newName,
-    });
-    session.customName = newName || null;
+    await renameHistorySession(session, newName);
     // 更新显示
     if (newName) {
       nameEl.className = 'claude-session-name';
@@ -2234,6 +2766,10 @@ function startClaudeSessionRename(session, nameEl) {
       nameEl.className = 'claude-session-summary';
       nameEl.textContent = session.summary ? session.summary.slice(0, 50) : '(空会话)';
     }
+    const searchInput = claudeDropdown.querySelector('.claude-search-input');
+    const filterValue = searchInput ? searchInput.value.trim().toLowerCase() : '';
+    const listEl = claudeDropdown.querySelector('.claude-list');
+    if (listEl) renderConversationList(listEl, filterValue);
   };
 
   input.addEventListener('keydown', (e) => {
@@ -3156,23 +3692,17 @@ document.addEventListener('click', (e) => {
 });
 
 // ============ Ctrl+滚轮调整字体大小 ============
-let globalFontSize = 14;
-const MIN_FONT_SIZE = 8;
-const MAX_FONT_SIZE = 32;
-
 container.addEventListener('wheel', (e) => {
   if (!e.ctrlKey) return;
   e.preventDefault();
   const delta = e.deltaY > 0 ? -1 : 1;
-  globalFontSize = Math.min(Math.max(globalFontSize + delta, MIN_FONT_SIZE), MAX_FONT_SIZE);
-  for (const [, session] of allSessions) {
-    session.term.options.fontSize = globalFontSize;
-  }
-  fitAllSessions();
+  applyTerminalAppearance({ fontSize: globalFontSize + delta });
 }, { passive: false });
 
 // ============ 初始化 ============
 (async function init() {
+  applyTerminalAppearance({ persist: false });
+
   // 尝试恢复上次布局
   let layoutRestored = false;
   try {
@@ -3180,8 +3710,17 @@ container.addEventListener('wheel', (e) => {
     if (layout) {
       // 恢复主题
       if (layout.theme && THEMES[layout.theme]) {
-        currentTheme = layout.theme;
-        document.documentElement.dataset.theme = currentTheme === 'light' ? 'light' : '';
+        applyTheme(layout.theme, { persist: false });
+      }
+      if (typeof layout.terminalFontFamily === 'string' || typeof layout.terminalFontSize === 'number') {
+        const restoredFontFamily = typeof layout.terminalFontFamily === 'string'
+          ? (layout.terminalFontFamily === LEGACY_YAHEI_DEFAULT_FONT_FAMILY ? DEFAULT_TERMINAL_FONT_FAMILY : layout.terminalFontFamily)
+          : globalFontFamily;
+        applyTerminalAppearance({
+          fontFamily: restoredFontFamily,
+          fontSize: typeof layout.terminalFontSize === 'number' ? layout.terminalFontSize : globalFontSize,
+          persist: false,
+        });
       }
       if (Array.isArray(layout.tabs) && layout.tabs.length > 0) {
         for (let i = 0; i < layout.tabs.length; i++) {
@@ -3192,16 +3731,29 @@ container.addEventListener('wheel', (e) => {
           const panes = tabLayout.panes || Array.from({ length: Math.min(Math.max(tabLayout.count || 1, 1), 6) }, () => ({ cwd: tabLayout.cwd || null }));
 
           for (const pane of panes) {
+            const restoredHistoryProvider = pane.historyProvider
+              || (pane.claudeSessionId ? 'claude' : null)
+              || (pane.codexSessionId ? 'codex' : null);
+            const restoredHistoryName = pane.name || pane.codexThreadName || null;
             const sid = await createSession(tabId, {
               cwd: pane.cwd || null,
+              historyProvider: restoredHistoryProvider,
               claudeSessionId: pane.claudeSessionId || null,
               claudeProjectPath: pane.claudeProjectPath || null,
-              claudeName: pane.name || null,
+              claudeName: restoredHistoryProvider === 'claude' ? (pane.name || null) : null,
+              codexSessionId: pane.codexSessionId || null,
+              codexThreadName: pane.codexThreadName || null,
+              historyName: restoredHistoryName,
             });
-            // 如果有关联的 Claude 历史会话，自动 resume
-            if (sid && pane.claudeSessionId) {
+            // 如果有关联的历史会话，自动 resume
+            if (sid && restoredHistoryProvider === 'claude' && pane.claudeSessionId) {
               setTimeout(() => {
                 window.termAPI.write({ id: sid, data: `claude --resume ${pane.claudeSessionId}\r` });
+              }, 800);
+            }
+            if (sid && restoredHistoryProvider === 'codex' && pane.codexSessionId) {
+              setTimeout(() => {
+                window.termAPI.write({ id: sid, data: `codex resume ${pane.codexSessionId}\r` });
               }, 800);
             }
           }
@@ -3226,25 +3778,7 @@ container.addEventListener('wheel', (e) => {
 
 // 窗口关闭前保存布局
 window.addEventListener('beforeunload', () => {
-  try {
-    const tabsLayout = [];
-    for (const [, tab] of tabs) {
-      const panes = [];
-      for (const sid of tab.sessions) {
-        const s = allSessions.get(sid);
-        if (!s) continue;
-        panes.push({
-          name: s.name,
-          cwd: s.cwd || null,
-          claudeSessionId: s.claudeSessionId || null,
-          claudeProjectPath: s.claudeProjectPath || null,
-        });
-      }
-      if (panes.length === 0) continue;
-      tabsLayout.push({ name: tab.name, panes });
-    }
-    window.termAPI.saveLayout({ tabs: tabsLayout, theme: currentTheme });
-  } catch { /* ignore */ }
+  persistLayout();
 });
 
 // ============ 自动更新 ============
@@ -3337,6 +3871,17 @@ window.addEventListener('beforeunload', () => {
 
   // 更新日志数据
   const CHANGELOG = [
+    {
+      version: '1.6.0',
+      date: '2026-03-30',
+      notes: [
+        '新增：统一“对话历史”，支持在同一列表中查看 Claude 与 Codex 会话，并显示来源标识',
+        '新增：Codex 历史会话支持收藏、重命名、删除，并支持布局恢复后自动续接',
+        '新增：终端支持 Ctrl+Enter 换行，外部文件拖拽到窗口后自动粘贴绝对路径',
+        '优化：常用设置集中管理字体与更新，移除重复入口',
+        '优化：默认终端字体改为 Consolas 优先，微软雅黑仅作中文回退，整体显示更紧凑',
+      ],
+    },
     {
       version: '1.5.1',
       date: '2026-03-20',
@@ -3449,15 +3994,15 @@ window.addEventListener('beforeunload', () => {
   changelogModal.id = 'changelog-modal';
   changelogModal.style.cssText = 'display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;';
   changelogModal.innerHTML = `
-    <div style="background:#0f1923;border:1px solid #1e3a5a;border-radius:8px;width:520px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #1e3a5a;">
-        <span style="color:#a0d4ff;font-size:14px;font-weight:600;">版本更新说明</span>
-        <button id="changelog-close" style="background:none;border:none;color:#607080;cursor:pointer;font-size:18px;line-height:1;">×</button>
+    <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;width:520px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-primary);font-size:14px;font-weight:600;">版本更新说明</span>
+        <button id="changelog-close" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:18px;line-height:1;">×</button>
       </div>
       <div id="changelog-body" style="overflow-y:auto;padding:16px 18px;flex:1;"></div>
-      <div style="padding:12px 18px;border-top:1px solid #1e3a5a;display:flex;justify-content:flex-end;gap:8px;">
-        <button id="changelog-check-update" style="padding:5px 16px;background:#0099ee;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;">检查更新</button>
-        <button id="changelog-close-btn" style="padding:5px 16px;background:#1e3a5a;color:#a0d4ff;border:none;border-radius:4px;cursor:pointer;font-size:13px;">关闭</button>
+      <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;">
+        <button id="changelog-check-update" style="padding:5px 16px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;">检查更新</button>
+        <button id="changelog-close-btn" style="padding:5px 16px;background:var(--bg-active);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:13px;">关闭</button>
       </div>
     </div>`;
   document.body.appendChild(changelogModal);
@@ -3469,10 +4014,10 @@ window.addEventListener('beforeunload', () => {
     block.style.cssText = 'margin-bottom:18px;';
     block.innerHTML = `
       <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;">
-        <span style="color:#00c8b0;font-size:14px;font-weight:700;">v${version}</span>
-        <span style="color:#405060;font-size:12px;">${date}</span>
+        <span style="color:var(--accent);font-size:14px;font-weight:700;">v${version}</span>
+        <span style="color:var(--text-secondary);font-size:12px;">${date}</span>
       </div>
-      <ul style="margin:0;padding-left:18px;color:#8090a0;font-size:13px;line-height:1.8;">
+      <ul style="margin:0;padding-left:18px;color:var(--text-primary);font-size:13px;line-height:1.8;">
         ${notes.map(n => `<li>${n}</li>`).join('')}
       </ul>`;
     changelogBody.appendChild(block);
@@ -3481,6 +4026,7 @@ window.addEventListener('beforeunload', () => {
   function showChangelog() {
     changelogModal.style.display = 'flex';
   }
+  showUpdaterChangelog = showChangelog;
   function hideChangelog() {
     changelogModal.style.display = 'none';
   }
@@ -3492,15 +4038,4 @@ window.addEventListener('beforeunload', () => {
     hideChangelog();
     window.termAPI.updaterCheckForUpdates();
   });
-
-  // 工具栏加"更新"按钮
-  const toolbarActions = document.getElementById('toolbar-actions');
-  if (toolbarActions) {
-    const btnUpdate = document.createElement('button');
-    btnUpdate.id = 'btn-check-update';
-    btnUpdate.title = '版本更新说明';
-    btnUpdate.textContent = '⬆ 更新';
-    btnUpdate.addEventListener('click', showChangelog);
-    toolbarActions.appendChild(btnUpdate);
-  }
 })();

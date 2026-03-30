@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('termAPI', {
   createSession: (opts) => ipcRenderer.invoke('pty:create', opts),
@@ -29,6 +29,16 @@ contextBridge.exposeInMainWorld('termAPI', {
   createFolder: (dirPath) => ipcRenderer.invoke('fs:createFolder', dirPath),
   showInExplorer: (filePath) => ipcRenderer.invoke('fs:showInExplorer', filePath),
   openFile: (filePath) => ipcRenderer.invoke('fs:openFile', filePath),
+  resolveNativeFilePaths: (files) => {
+    if (!Array.isArray(files)) return [];
+    return files.map((file) => {
+      try {
+        return webUtils.getPathForFile(file);
+      } catch {
+        return '';
+      }
+    }).filter(Boolean);
+  },
   watchDir: (dirPath) => ipcRenderer.invoke('fs:watch', dirPath),
   unwatchDir: () => ipcRenderer.invoke('fs:unwatch'),
   onFsChanged: (callback) => {
@@ -48,9 +58,13 @@ contextBridge.exposeInMainWorld('termAPI', {
   saveLastFolder: (folderPath) => ipcRenderer.invoke('lastFolder:save', folderPath),
   // Claude 会话 API
   listClaudeSessions: (opts) => ipcRenderer.invoke('claude:listSessions', opts),
+  listConversationSessions: (opts) => ipcRenderer.invoke('conversation:listSessions', opts),
   renameClaudeSession: (opts) => ipcRenderer.invoke('claude:renameSession', opts),
   pinClaudeSession: (opts) => ipcRenderer.invoke('claude:pinSession', opts),
   deleteClaudeSession: (opts) => ipcRenderer.invoke('claude:deleteSession', opts),
+  renameCodexSession: (opts) => ipcRenderer.invoke('codex:renameSession', opts),
+  pinCodexSession: (opts) => ipcRenderer.invoke('codex:pinSession', opts),
+  deleteCodexSession: (opts) => ipcRenderer.invoke('codex:deleteSession', opts),
   findLatestClaudeSession: (opts) => ipcRenderer.invoke('claude:findLatestSession', opts),
   getClaudeSessionDetail: (opts) => ipcRenderer.invoke('claude:getSessionDetail', opts),
   // 定时任务 API
